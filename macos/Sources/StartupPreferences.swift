@@ -11,6 +11,14 @@ struct StartupPreferences: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
+      if let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String {
+        LabeledContent(L("应用版本")) {
+          let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+          Text(verbatim: build.map { "\(version) (\($0))" } ?? version)
+            .foregroundStyle(.secondary).textSelection(.enabled)
+        }
+        Divider()
+      }
       HStack {
         Text(L("界面语言"))
         Spacer()

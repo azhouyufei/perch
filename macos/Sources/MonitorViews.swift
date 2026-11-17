@@ -187,7 +187,7 @@ private struct CoreHistory: View {
 }
 struct Preferences: View {
   @ObservedObject var studio: Studio
-  @AppStorage("appearance") private var appearance = "dark"
+  @AppStorage("appearance") private var appearance = ScopeTheme.defaultAppearance
   @AppStorage("systemCapturePicker") private var systemCapturePicker = false
   @State private var screenAllowed = CGPreflightScreenCaptureAccess()
   @AppStorage("interval") var interval = 2.0

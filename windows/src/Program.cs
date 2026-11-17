@@ -73,7 +73,7 @@ static class Program
                 if (!owner)
                 {
                     if (OlderInstanceRunning()){
-                        MessageBox.Show(Data.T("旧版桌面工具正在运行。请先从系统托盘退出旧版，再打开 Perch。","An older version of the app is running. Quit it from the system tray, then open Perch."),Data.AppName+" 2.15");
+                        MessageBox.Show(Data.T("旧版桌面工具正在运行。请先从系统托盘退出旧版，再打开 Perch。","An older version of the app is running. Quit it from the system tray, then open Perch."),Data.AppName + " " + Data.AppVersion);
                         return;
                     }
                     reopen.Set();
@@ -150,7 +150,7 @@ sealed partial class Workspace : Form
     public Workspace()
     {
         UI.Theme(this);
-        Text = Data.AppName+" 2.15";
+        Text = Data.AppName + " " + Data.AppVersion;
         MinimumSize = new Size(800, 580);
         Size = new Size(1030, 764);
         AutoScaleMode = AutoScaleMode.Dpi;

@@ -71,7 +71,7 @@ sealed partial class Workspace
         Controls.Clear();navButtons.Clear();
         sidebar=new FlowLayoutPanel{Dock=DockStyle.Fill,Padding=new Padding(D(9),D(14),D(9),0),FlowDirection=FlowDirection.TopDown,WrapContents=false,BackColor=UI.Card};
         var rail=new Panel{Dock=DockStyle.Left,Width=D(160),BackColor=UI.Card};
-        Text = Data.AppName + " 2.15";
+        Text = Data.AppName + " " + Data.AppVersion;
         var brand=UI.Label(Data.AppName,15);brand.Font=new Font(brand.Font,FontStyle.Bold);brand.AutoSize=false;brand.Size=new Size(D(135),D(46));
         brand.TextAlign=ContentAlignment.MiddleRight;brand.ImageAlign=ContentAlignment.MiddleLeft;brand.Image=new Bitmap(Icon.ToBitmap(),new Size(D(33),D(33)));brand.Margin=new Padding(D(4),0,0,D(17));sidebar.Controls.Add(brand);
         var symbols=new[]{"dashboard","activity","usage","tasks","clipboard","gallery","settings"};
@@ -597,6 +597,7 @@ sealed partial class Workspace
     {
         var lang = new[] { "system", "zh", "en" };
         var themes = new[] { "system", "light", "dark" };
+        Bar(UI.Label(Data.T("应用版本", "App version")), UI.Label(Data.AppVersionWithBuild));
         Bar(UI.Label(Data.T("界面语言", "Language")),
             UI.Select(new[] { Data.T("跟随系统", "System"), "简体中文", "English" }, Array.IndexOf(lang, Data.Pref.Language),
                       i =>
@@ -729,8 +730,7 @@ sealed partial class Workspace
                        }
                    }));
         Section(Data.T("本地数据", "Local data"));
-        Bar(UI.Btn(Data.T("打开数据目录", "Open data folder"), () => Data.Shell(Data.Root)),
-            UI.Label(Data.AppName+" 2.15 · Windows"));
+        Bar(UI.Btn(Data.T("打开数据目录", "Open data folder"), () => Data.Shell(Data.Root)));
     }
     void RebuildShell()
     {

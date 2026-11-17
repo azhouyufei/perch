@@ -1,6 +1,8 @@
 import SwiftUI
 
 enum ScopeTheme {
+  static let defaultAppearance = "system"
+
   private static func tone(_ light: UInt32, _ dark: UInt32) -> Color {
     Color(
       nsColor: NSColor(name: nil) { appearance in

@@ -13,8 +13,8 @@ using System.Runtime.InteropServices;
 
 [assembly:AssemblyTitle("Perch")]
 [assembly:AssemblyProduct("Perch for Windows")]
-[assembly:AssemblyVersion("2.15.0.0")]
-[assembly:AssemblyFileVersion("2.15.0.20")]
+[assembly:AssemblyVersion("2.15.1.0")]
+[assembly:AssemblyFileVersion("2.15.1.21")]
 namespace DeskToys
 {
 public sealed class Settings
@@ -122,6 +122,10 @@ internal static class Data
         }
     }
     internal const string AppName = "Perch";
+    private static readonly FileVersionInfo AppFile = FileVersionInfo.GetVersionInfo(typeof(Data).Assembly.Location);
+    internal static readonly string AppVersion = new Version(AppFile.FileMajorPart, AppFile.FileMinorPart,
+                                                             AppFile.FileBuildPart).ToString(AppFile.FileBuildPart == 0 ? 2 : 3);
+    internal static readonly string AppVersionWithBuild = AppVersion + " (" + AppFile.FilePrivatePart + ")";
     internal static string T(string zh, string en)
     {
         return Chinese ? zh : en;

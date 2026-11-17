@@ -20,7 +20,7 @@ catch {
   exit(1)
 }
 let delegate = AppDelegate()
-ScopeTheme.applyAppearance(UserDefaults.standard.string(forKey: "appearance") ?? "dark")
+ScopeTheme.applyAppearance(UserDefaults.standard.string(forKey: "appearance") ?? ScopeTheme.defaultAppearance)
 application.delegate = delegate
 application.setActivationPolicy(.regular)
 application.run()
