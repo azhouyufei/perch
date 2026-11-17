@@ -1,0 +1,22 @@
+name: Windows screenshots
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  capture:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: microsoft/setup-msbuild@v2
+      - name: Build and capture English light and dark windows
+        shell: pwsh
+        run: |
+          msbuild tools/screenshots/windows/Screenshots.csproj /nologo
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          tools/screenshots/windows/bin/Perch.Screenshots.exe native-captures
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-screenshots
+          path: native-captures/*.png
+          if-no-files-found: error

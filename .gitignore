@@ -1,0 +1,8 @@
+.DS_Store
+**/bin/
+**/obj/
+macos/build/
+.vs/
+*.user
+*.suo
+*.zip
