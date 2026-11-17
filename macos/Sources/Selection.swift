@@ -4,6 +4,17 @@ import ScreenCaptureKit
 
 enum SnipAction { case copy, pin, edit, save, preferred }
 enum CropGeometry {
+  // Window lists use Quartz desktop coordinates. Clip on the destination display
+  // before flipping Y into the overlay's local AppKit coordinate space.
+  static func localWindow(_ window: CGRect, on display: CGRect, in canvas: CGSize) -> CGRect? {
+    let hit = display.intersection(window)
+    guard !hit.isEmpty, !display.isEmpty else { return nil }
+    let sx = canvas.width / display.width, sy = canvas.height / display.height
+    let rect = CGRect(x: (hit.minX - display.minX) * sx, y: (display.maxY - hit.maxY) * sy,
+                      width: hit.width * sx, height: hit.height * sy)
+    return rect.width >= 8 && rect.height >= 8 ? rect : nil
+  }
+
   // AppKit's selection uses a bottom-left origin; CGImage pixels start at top left.
   static func pixels(_ rect: CGRect, in bounds: CGRect, image: CGImage) -> CGRect {
     let r = rect.standardized.intersection(bounds)
@@ -86,7 +97,9 @@ final class RegionSelection {
   @MainActor private func direct(
     mode: CaptureMode, _ completion: @escaping (CGImage?, SnipAction) -> Void
   ) async throws {
-    let screens = mode == .display ? Array(NSScreen.screens.prefix(1)) : NSScreen.screens
+    let available = NSScreen.screens
+    let pointerScreen = available.first { $0.frame.contains(NSEvent.mouseLocation) } ?? available.first
+    let screens = mode == .display ? [pointerScreen].compactMap { $0 } : available
     var targets: [(id: CGWindowID, rect: CGRect)] = []
     var windowShot: ((CGWindowID) async throws -> CGImage)?
     var frozen: [(NSScreen, CGImage)] = []
@@ -173,7 +186,6 @@ final class RegionSelection {
     _ completion: @escaping (CGImage?, SnipAction) -> Void
   ) {
     end = completion
-    NSApp.activate(ignoringOtherApps: true)
     escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
       guard event.keyCode == 53, let self, self.panels.contains(where: { $0.isVisible }) else { return event }
       self.cancel()
@@ -181,7 +193,7 @@ final class RegionSelection {
     }
     for (screen, image) in frozen {
       let p = SelectionPanel(
-        contentRect: screen.frame, styleMask: [.borderless],
+        contentRect: screen.frame, styleMask: [.borderless, .nonactivatingPanel],
         backing: .buffered, defer: false)
       p.setFrame(screen.frame, display: false)
       p.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.screenSaverWindow)))
@@ -190,14 +202,17 @@ final class RegionSelection {
       p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
       p.hasShadow = false
       let view = SelectionCanvas(image: image)
-      let top = NSScreen.screens.first?.frame.maxY ?? 0
-      view.windows = targets.compactMap { target in
-        let global = CGRect(
-          x: target.rect.minX, y: top - target.rect.maxY, width: target.rect.width,
-          height: target.rect.height)
-        let local = global.intersection(screen.frame).offsetBy(
-          dx: -screen.frame.minX, dy: -screen.frame.minY)
-        return !local.isNull && local.width >= 8 && local.height >= 8 ? (target.id, local) : nil
+      if let id = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber {
+        let display = CGDisplayBounds(id.uint32Value)
+        view.windows = targets.compactMap { target in
+          CropGeometry.localWindow(target.rect, on: display, in: screen.frame.size).map { (target.id, $0) }
+        }
+      }
+      view.pointerEntered = { [weak self, weak p] in
+        guard let self, let p, !p.isKeyWindow,
+              !self.panels.contains(where: { ($0.contentView as? SelectionCanvas)?.hasSelection == true })
+        else { return }
+        p.makeKey()
       }
       view.windowMode = mode == .window
       if mode == .window {
@@ -251,7 +266,7 @@ final class RegionSelection {
       p.close()
     }
     panels = []
-    if let previous, previous.processIdentifier != ProcessInfo.processInfo.processIdentifier {
+    if let previous, !previous.isActive, previous.processIdentifier != ProcessInfo.processInfo.processIdentifier {
       previous.activate(options: [])
     }
     previous = nil
@@ -266,7 +281,9 @@ final class SelectionCanvas: NSView, NSTextFieldDelegate {
   var windows: [(CGWindowID, CGRect)] = []
   var windowMode = false
   var pickWindow: ((CGWindowID) -> Void)?
-  private var hovered: (CGWindowID, CGRect)?
+  private(set) var hovered: (CGWindowID, CGRect)?
+  var pointerEntered: (() -> Void)?
+  private var pointerTracking: NSTrackingArea?
   private var pointer: CGPoint?
   private var original = CGRect.zero
   private var grip: CGPoint?
@@ -652,12 +669,28 @@ final class SelectionCanvas: NSView, NSTextFieldDelegate {
       x: min(1, max(0, (p.x - selection.minX) / selection.width)),
       y: min(1, max(0, (selection.maxY - p.y) / selection.height)))
   }
+  override func updateTrackingAreas() {
+    super.updateTrackingAreas()
+    if let pointerTracking { removeTrackingArea(pointerTracking) }
+    let area = NSTrackingArea(rect: .zero,
+      options: [.activeAlways, .inVisibleRect, .mouseMoved, .mouseEnteredAndExited],
+      owner: self, userInfo: nil)
+    addTrackingArea(area)
+    pointerTracking = area
+  }
+  override func mouseEntered(with event: NSEvent) {
+    pointerEntered?()
+    mouseMoved(with: event)
+  }
+  override func mouseExited(with event: NSEvent) {
+    updatePointer(nil)
+  }
   override func mouseMoved(with e: NSEvent) {
     updatePointer(convert(e.locationInWindow, from: nil))
   }
-  func updatePointer(_ p: CGPoint) {
-    pointer = bounds.contains(p) ? p : nil
-    hovered = windows.first { $0.1.contains(p) }
+  func updatePointer(_ point: CGPoint?) {
+    pointer = point.flatMap { bounds.contains($0) ? $0 : nil }
+    hovered = pointer.flatMap { p in windows.first { $0.1.contains(p) } }
     needsDisplay = true
   }
   private func hex(at p: CGPoint) -> String {

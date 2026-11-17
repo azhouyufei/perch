@@ -203,6 +203,22 @@ check(
 
 let region = SelectionCanvas(image: fixture)
 region.frame = NSRect(x: 0, y: 0, width: 100, height: 50)
+let upperDisplay = CGRect(x: -900, y: -600, width: 900, height: 600)
+let spanningWindow = CGRect(x: -100, y: -150, width: 400, height: 240)
+check(CropGeometry.localWindow(spanningWindow, on: upperDisplay, in: upperDisplay.size) ==
+      CGRect(x: 800, y: 0, width: 100, height: 150), "upper-left display clips spanning candidates in display-local points")
+let lowerDisplay = CGRect(x: 0, y: 0, width: 1600, height: 900)
+check(CropGeometry.localWindow(spanningWindow, on: lowerDisplay, in: lowerDisplay.size) ==
+      CGRect(x: 0, y: 810, width: 300, height: 90), "same window maps to the other display independently of backing pixels")
+region.updateTrackingAreas()
+check(region.trackingAreas.contains { $0.options.contains([.activeAlways, .mouseMoved, .mouseEnteredAndExited]) },
+      "non-key capture panels track hover and screen crossings")
+region.windows = [(7, region.bounds), (8, region.bounds)]
+region.updatePointer(CGPoint(x: 20, y: 20))
+check(region.hovered?.0 == 7, "frontmost visible candidate under the pointer wins")
+region.updatePointer(nil)
+check(region.hovered == nil, "leaving a capture display clears its previous candidate")
+region.windows = []
 var captured: CGImage?
 var regionAction: SnipAction?
 region.done = {
