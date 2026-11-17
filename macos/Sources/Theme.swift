@@ -28,6 +28,38 @@ enum ScopeTheme {
   }
 }
 
+// A status item can inherit its appearance from the menu bar on its display.
+// Give its detached panels and menus the same effective appearance as the workspace.
+final class StatusAppearance {
+  private let popover: NSPopover
+  private weak var menu: NSMenu?
+  private var observation: NSKeyValueObservation?
+
+  init(popover: NSPopover) {
+    self.popover = popover
+    observation = NSApp.observe(\.effectiveAppearance, options: [.initial, .new]) { [weak self] app, _ in
+      self?.update(app.effectiveAppearance)
+    }
+  }
+
+  func prepare(_ menu: NSMenu) {
+    self.menu = menu
+    apply(NSApp.effectiveAppearance, to: menu)
+  }
+
+  private func update(_ appearance: NSAppearance) {
+    popover.appearance = appearance
+    if let menu { apply(appearance, to: menu) }
+  }
+
+  private func apply(_ appearance: NSAppearance, to menu: NSMenu) {
+    menu.appearance = appearance
+    for item in menu.items {
+      if let submenu = item.submenu { apply(appearance, to: submenu) }
+    }
+  }
+}
+
 // Keep related cards aligned and give labels enough room when the workspace narrows.
 struct FittingColumns: Layout {
   var minimum: CGFloat

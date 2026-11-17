@@ -10,6 +10,7 @@ final class ScreenshotDelegate: NSObject, NSApplicationDelegate {
   var notes: TodoNotes!
   var status: NSStatusItem!
   let popover = NSPopover()
+  lazy var statusAppearance = StatusAppearance(popover: popover)
   var sampleShot: Shot!
   var step = 0
   let scenes = ["usage", "dashboard", "annotation", "clipboard", "note", "panel", "network"]
@@ -111,7 +112,7 @@ final class ScreenshotDelegate: NSObject, NSApplicationDelegate {
         .environment(\.processTablesVisible, false))
       popover.contentViewController = controller
       popover.animates = false
-      popover.appearance = NSApp.appearance
+      _ = statusAppearance
       guard let button = status.button else { fail(CocoaError(.featureUnsupported)); return }
       popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
       guard let panel = controller.view.window else { fail(CocoaError(.featureUnsupported)); return }
@@ -146,7 +147,6 @@ final class ScreenshotDelegate: NSObject, NSApplicationDelegate {
   // Capture only a menu window owned by this documentation process.
   func captureMenu() {
     let menu = menuOwner.statusMenu()
-    menu.appearance = NSApp.appearance
     guard let anchor = status.button else { return }
     let before = Set(windowIDs())
     let filename = "macos-menu-" + (dark ? "dark" : "light") + ".png"

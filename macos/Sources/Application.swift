@@ -153,6 +153,7 @@ private struct StatusPreferences: Equatable {
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverDelegate {
   var studio: Studio!
   private let popover = NSPopover()
+  private lazy var statusAppearance = StatusAppearance(popover: popover)
   private var networkItem: NSStatusItem!, pinSubscription: AnyCancellable?
   private var anchor: InstrumentTab?
   private var usageItem: NSStatusItem!
@@ -222,6 +223,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
       status.button?.toolTip = tip
       status.button?.setAccessibilityLabel(tip)
     }
+    _ = statusAppearance
     popover.animates = false
     popover.behavior = .transient
     popover.delegate = self
@@ -421,6 +423,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
     menu.addItem(.separator());add(L("偏好设置…"),#selector(settings),",")
     menu.addItem(.separator())
     menu.addItem(withTitle:L("退出Perch"),action:#selector(NSApplication.terminate(_:)),keyEquivalent:"q").target = NSApp
+    statusAppearance.prepare(menu)
     return menu
   }
   private static func awakeTitle(_ active: Bool, _ end: Date?) -> String {
@@ -449,7 +452,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
     showingStatusMenu = true
     defer { showingStatusMenu = false }
     popover.performClose(nil)
-    awakeMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.minY - 3), in: sender)
+    let menu = awakeMenu()
+    statusAppearance.prepare(menu)
+    menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.minY - 3), in: sender)
   }
   @objc private func customAwake() { studio.awake.chooseDuration() }
   @objc private func indefiniteAwake() {
