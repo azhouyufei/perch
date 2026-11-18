@@ -13,8 +13,8 @@ using System.Runtime.InteropServices;
 
 [assembly:AssemblyTitle("Perch")]
 [assembly:AssemblyProduct("Perch for Windows")]
-[assembly:AssemblyVersion("2.15.1.0")]
-[assembly:AssemblyFileVersion("2.15.1.21")]
+[assembly:AssemblyVersion("2.17.8.0")]
+[assembly:AssemblyFileVersion("2.17.8.31")]
 namespace DeskToys
 {
 public sealed class Settings

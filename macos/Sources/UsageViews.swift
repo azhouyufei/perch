@@ -2,10 +2,16 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 private func inRange(_ rows: [UsageRow], _ days: Int) -> [UsageRow] {
-  let cal = Calendar.current
-  let today = Calendar.current.startOfDay(for: Date())
-  let first = cal.date(byAdding: .day, value: 1 - days, to: today) ?? today
-  return rows.filter { $0.date >= first && $0.date <= today }
+  RecordedUsage.inRange(rows, days: days)
+}
+private struct UsageScopeNote: View {
+  let tool: UsageTool
+  var body: some View {
+    Text(tool.showsCodexQuota
+      ? L("仅统计本机记录；未提供 Token 明细的 ChatGPT Work 用量不计入。")
+      : L("仅统计本机可读取的用量记录。"))
+      .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+  }
 }
 private func sum(_ list: [UsageRow]) -> UsageAmount {
   list.reduce(UsageAmount()) { $0 + $1.amount }
@@ -19,13 +25,12 @@ private struct UsageToolPicker: View {
           tool = source
         } label: {
           Text(L(source.rawValue)).font(.system(size: 11, weight: .semibold))
-            .lineLimit(1).fixedSize().padding(.horizontal, 6).padding(.vertical, 6)
-            .foregroundStyle(source == tool ? ScopeTheme.canvas : ScopeTheme.ink.opacity(0.78))
-            .background(source == tool ? ScopeTheme.ink : .clear, in: Capsule())
-            .contentShape(Capsule())
-        }.buttonStyle(.plain).accessibilityAddTraits(tool == source ? .isSelected : [])
+            .lineLimit(1).minimumScaleFactor(0.85)
+            .frame(maxWidth: .infinity).padding(.vertical, 8)
+        }.buttonStyle(StatusPanelButtonStyle(selected: source == tool))
+          .accessibilityAddTraits(tool == source ? .isSelected : [])
       }
-    }.padding(3).background(ScopeTheme.raised, in: Capsule())
+    }.padding(3).background(StatusPanelTheme.surface, in: RoundedRectangle(cornerRadius: 12))
   }
 }
 struct UsageSummary: View {
@@ -35,13 +40,22 @@ struct UsageSummary: View {
     let today = inRange(store.tool.filter(store.rows), 1)
     VStack(alignment: .leading, spacing: 12) {
       HStack {
-        Text(L("今日 Token")).font(.caption).foregroundStyle(.secondary)
+        Text(L("今日本机已记录 Token")).font(.caption).foregroundStyle(.secondary)
         Spacer()
 
       }
-      Text(shortTokens(sum(today).total)).font(
+      Text(RecordedUsage.display(today)).font(
         .system(size: 32, weight: .semibold, design: .rounded)
       ).monospacedDigit()
+      if today.isEmpty {
+        Text(store.scanning ? L("正在检查本机用量记录…") : L("今天暂无可读取的 Token 记录"))
+          .font(.caption).foregroundStyle(.secondary)
+        if let last = store.tool.filter(store.rows).map(\.date).max() {
+          Text(L("最近记录：") + last.formatted(date: .abbreviated, time: .omitted))
+            .font(.caption2).foregroundStyle(.secondary)
+        }
+      }
+      UsageScopeNote(tool: store.tool)
       UsageToolPicker(tool: $store.tool)
       ForEach(Array(Set(today.map(\.tool))).sorted(), id: \.self) { tool in
         HStack {
@@ -51,7 +65,13 @@ struct UsageSummary: View {
         }
       }
       QuotaPanel(store: store, compact: true)
-      Button(L("查看用量明细"), action: open)
+      Button(action: open) {
+        HStack {
+          Text(L("查看用量明细"))
+          Spacer()
+          Image(systemName: "arrow.up.right").font(.system(size: 10, weight: .semibold))
+        }.font(.system(size: 12, weight: .medium)).padding(10)
+      }.buttonStyle(StatusPanelButtonStyle(prominent: true))
       Text(store.status).font(.caption).foregroundStyle(.secondary)
     }.padding(12).tile().onAppear { store.start() }.onDisappear { store.stop() }
   }
@@ -68,7 +88,7 @@ private struct QuotaPanel: View {
         let windows = sample?.windows.filter { $0.reset > Date() } ?? []
         if let sample, !windows.isEmpty {
           VStack(alignment: .leading, spacing: 6) {
-            Text(L(tool.rawValue) + L(" · 剩余额度")).font(.headline)
+            Text(L(tool.rawValue) + L(tool == .codex ? " · 账户剩余额度" : " · 剩余额度")).font(.headline)
             ForEach(windows.indices, id: \.self) { i in
               let w = windows[i]
               HStack {
@@ -80,15 +100,15 @@ private struct QuotaPanel: View {
               Text(L("重置 ") + w.reset.formatted(date: .abbreviated, time: .shortened)).font(.caption2)
                 .foregroundStyle(.secondary)
             }
-            Text(L("本机快照 · ") + sample.date.formatted(date: .abbreviated, time: .shortened)).font(
+            Text((tool == .codex ? L("Codex 当前登录账户 · ") : L("本机快照 · ")) + sample.date.formatted(date: .abbreviated, time: .shortened)).font(
               .caption2
             ).foregroundStyle(.secondary)
           }.padding(compact ? 0 : 12).background(
             compact ? Color.clear : ScopeTheme.card, in: RoundedRectangle(cornerRadius: 12))
-        } else if !compact {
+        } else if tool == .codex || !compact {
           HStack {
             Text(
-              tool == .claude && store.claudeRoute == .external
+              tool == .codex ? store.codexQuotaStatus : tool == .claude && store.claudeRoute == .external
                 ? L("Claude Code · 自定义服务，未提供可验证额度") : L(tool.rawValue) + L(" · 暂无有效额度快照")
             ).font(.callout).foregroundStyle(.secondary)
             Spacer()
@@ -181,7 +201,7 @@ struct UsagePage: View {
         Spacer()
         Text(store.status).font(.caption).foregroundStyle(.secondary)
         Button {
-          store.refresh()
+          store.refresh(forceQuota: true)
         } label: {
           Image(systemName: "arrow.clockwise")
         }.disabled(store.scanning).help(L("重新扫描会话"))
@@ -189,9 +209,9 @@ struct UsagePage: View {
       }
       FittingColumns(minimum: 142, spacing: 12) {
         metric(
-          L("Token 总量"), shortTokens(total.total), "square.stack.3d.up.fill", ScopeTheme.labelAccent)
-        metric(L("输入"), shortTokens(total.input), "arrow.down.left", ScopeTheme.download)
-        metric(L("输出"), shortTokens(total.output), "arrow.up.right", ScopeTheme.upload)
+          L("本机已记录 Token"), RecordedUsage.display(rows), "square.stack.3d.up.fill", ScopeTheme.labelAccent)
+        metric(L("输入"), rows.isEmpty ? "—" : shortTokens(total.input), "arrow.down.left", ScopeTheme.download)
+        metric(L("输出"), rows.isEmpty ? "—" : shortTokens(total.output), "arrow.up.right", ScopeTheme.upload)
         metric(
           L("缓存命中"),
           total.input > 0
@@ -205,6 +225,7 @@ struct UsagePage: View {
         smallStat(L("已记录推理"), total.reasoning.map(shortTokens) ?? "—", "brain")
         smallStat(L("已记录缓存写入"), total.cacheWrite.map(shortTokens) ?? "—", "square.and.arrow.down")
       }
+      UsageScopeNote(tool: store.tool)
       DailyTokenHistory(rows: rows, days: days)
       UsageCalendar(rows: store.tool.filter(store.rows))
       ModelShare(rows: rows)

@@ -174,6 +174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
       "interval": 2.0, "hoverPreview": true, "afterCapture": "preview",
     ])
     studio = Studio()
+    AgentAlerts.shared.start()
     window = NSWindow(
       contentRect: NSRect(x: 0, y: 0, width: 980, height: 690),
       styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -206,14 +207,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
       button?.setAccessibilityLabel(title)
     }
     usageItem.button?.target = self
-    usageItem.button?.toolTip = L("Perch · 今日 Token 用量")
+    usageItem.button?.toolTip = L("Perch · 今日本机已记录 Token")
     usageSubscription = studio.usage.$rows.combineLatest(studio.usage.$tool).sink {
       [weak self] rows, tool in
-      let count = tool.filter(rows).filter { Calendar.current.isDateInToday($0.date) }.reduce(0) {
-        $0 + $1.total
-      }
-      self?.usageItem.button?.toolTip = L("Perch · ") + L(tool.rawValue) + L(" · 今日 Token")
-      self?.usageItem.button?.image = StatusInk.draw(tool.menuLabel, shortTokens(count), width: 45)
+      let today = RecordedUsage.inRange(tool.filter(rows), days: 1)
+      self?.usageItem.button?.toolTip = L("Perch · ") + L(tool.rawValue) + " · "
+        + (today.isEmpty ? L("今天暂无可读取的 Token 记录") : L("今日本机已记录 Token"))
+      self?.usageItem.button?.image = StatusInk.draw(tool.menuLabel, RecordedUsage.display(today), width: 45)
     }
     for (status, tip) in [
       (item!, L("Perch · 硬件")),
@@ -404,8 +404,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
     popover.performClose(nil)
     studio.clipChooser.open()
   }
+  @MainActor @objc private func openIsland() { AgentAlerts.shared.open(.sessions) }
   @objc func settings() { studio.page = .settings; show() }
   func applicationWillTerminate(_ notification: Notification) {
+    AgentAlerts.shared.stop()
     hoverTimer?.invalidate()
     studio?.awake.stop()
     notes?.terminate()
@@ -420,6 +422,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
     let entry = menu.addItem(withTitle: Self.awakeTitle(studio.awake.active, studio.awake.endsAt),
                              action: nil, keyEquivalent: "")
     entry.submenu = awakeMenu()
+    add(L("AI 会话灵动岛"),#selector(openIsland))
     menu.addItem(.separator());add(L("偏好设置…"),#selector(settings),",")
     menu.addItem(.separator())
     menu.addItem(withTitle:L("退出Perch"),action:#selector(NSApplication.terminate(_:)),keyEquivalent:"q").target = NSApp
@@ -508,7 +511,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
     let visible = primary?.isVisible == true ? primary : (item.isVisible ? item : networkItem)
     if let button = visible?.button {
       if popover.contentViewController == nil {
-        popover.contentViewController = NSHostingController(rootView: InstrumentPanel(studio: studio, monitor: studio.monitor, nav: studio.navigation))
+        let controller = NSHostingController(rootView: InstrumentPanel(studio: studio, monitor: studio.monitor, nav: studio.navigation))
+        controller.view.appearance = NSApp.effectiveAppearance
+        popover.contentViewController = controller
       }
       popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
       lastInside = ProcessInfo.processInfo.systemUptime

@@ -1,4 +1,5 @@
 import SwiftUI
+import PerchIsland
 
 enum ScopeTheme {
   static let defaultAppearance = "system"
@@ -12,11 +13,21 @@ enum ScopeTheme {
           green: CGFloat((rgb >> 8) & 255) / 255, blue: CGFloat(rgb & 255) / 255, alpha: 1)
       })
   }
-  static let canvas = tone(0xF2F2F2, 0x0D0D0D)
-  static let sidebar = tone(0xEAEAEA, 0x121212)
-  static let card = tone(0xFFFFFF, 0x1C1C1C)
-  static let raised = tone(0xE8E8E8, 0x303030)
-  static let ink = tone(0x171717, 0xFAFAFA)
+  private static func shared(_ token: PerchPalette.Token) -> Color {
+    Color(nsColor: NSColor(name: nil) { PerchPalette(appearance: $0).color(token) })
+  }
+  static let canvas = shared(.middle)
+  static let canvasStart = shared(.start)
+  static let canvasEnd = shared(.end)
+  static let sidebar = shared(.card).opacity(0.32)
+  static let card = shared(.card).opacity(0.80)
+  static let raised = shared(.raised)
+  static let ink = shared(.ink)
+  static let muted = shared(.muted)
+  static let inverse = shared(.inverse)
+  static let background = LinearGradient(
+    stops: [.init(color: canvasStart, location: 0), .init(color: canvas, location: 0.52),
+            .init(color: canvasEnd, location: 1)], startPoint: .topLeading, endPoint: .bottomTrailing)
   static let accent = tone(0x343434, 0x424242)
   static let labelAccent = tone(0x414141, 0xD6D6D6)
   static let download = tone(0x0074AE, 0x19A7F5)
@@ -30,8 +41,7 @@ enum ScopeTheme {
   }
 }
 
-// A status item can inherit its appearance from the menu bar on its display.
-// Give its detached panels and menus the same effective appearance as the workspace.
+// Every surface follows the resolved app appearance, including an already open popover.
 final class StatusAppearance {
   private let popover: NSPopover
   private weak var menu: NSMenu?
@@ -51,6 +61,7 @@ final class StatusAppearance {
 
   private func update(_ appearance: NSAppearance) {
     popover.appearance = appearance
+    popover.contentViewController?.view.appearance = appearance
     if let menu { apply(appearance, to: menu) }
   }
 
@@ -99,5 +110,56 @@ struct FittingColumns: Layout {
                  anchor: .topLeading, proposal: .init(width: cell, height: height))
       if column == columns - 1 { y += height + spacing }
     }
+  }
+}
+
+enum StatusPanelTheme {
+  static let background = ScopeTheme.background
+  static let surface = ScopeTheme.card
+  static let muted = ScopeTheme.muted
+  static let border = ScopeTheme.ink.opacity(0.08)
+}
+
+private struct StatusPanelEnvironmentKey: EnvironmentKey {
+  static let defaultValue = false
+}
+extension EnvironmentValues {
+  var isStatusPanel: Bool {
+    get { self[StatusPanelEnvironmentKey.self] }
+    set { self[StatusPanelEnvironmentKey.self] = newValue }
+  }
+}
+
+struct StatusPanelButtonStyle: ButtonStyle {
+  var selected = false
+  var prominent = false
+  @Environment(\.isEnabled) private var enabled
+  @State private var hovered = false
+
+  func makeBody(configuration: Configuration) -> some View {
+    configuration.label
+      .foregroundStyle(prominent ? ScopeTheme.inverse : selected || hovered ? ScopeTheme.ink : StatusPanelTheme.muted)
+      .background(
+        prominent ? ScopeTheme.ink.opacity(configuration.isPressed ? 0.8 : 0.95)
+          : ScopeTheme.ink.opacity(configuration.isPressed ? 0.20 : selected ? 0.14 : hovered ? 0.10 : 0),
+        in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+      )
+      .overlay {
+        RoundedRectangle(cornerRadius: 9, style: .continuous)
+          .strokeBorder(ScopeTheme.ink.opacity(selected && !prominent ? 0.08 : 0))
+      }
+      .opacity(enabled ? 1 : 0.4)
+      .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+      .onHover { hovered = $0 }
+  }
+}
+
+struct TileSurface: ViewModifier {
+  let radius: CGFloat
+  @Environment(\.isStatusPanel) private var isStatusPanel
+  func body(content: Content) -> some View {
+    let shape = RoundedRectangle(cornerRadius: isStatusPanel ? 14 : radius, style: .continuous)
+    content.background(isStatusPanel ? StatusPanelTheme.surface : ScopeTheme.card, in: shape)
+      .overlay(shape.strokeBorder(isStatusPanel ? StatusPanelTheme.border : Color.primary.opacity(0.04)))
   }
 }

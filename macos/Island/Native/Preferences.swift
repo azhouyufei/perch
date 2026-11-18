@@ -1,0 +1,105 @@
+import Foundation
+import PerchCore
+
+/// What Perch remembers between launches.
+enum Prefs {
+    private static let d = UserDefaults(suiteName: "studio.scopebar.mac.island")!
+    static var onboarded: Bool { get { d.bool(forKey: "onboarded") } set { d.set(newValue, forKey: "onboarded") } }
+    /// Set when Perch restarts itself in the middle of setup, so it picks up at the same step.
+    static var resumeStep: Int? {
+        get { d.object(forKey: "resumeStep") as? Int }
+        set { if let v = newValue { d.set(v, forKey: "resumeStep") } else { d.removeObject(forKey: "resumeStep") } }
+    }
+    static var expression: String {
+        get { d.string(forKey: "character.expression") ?? "neutral" }
+        set { d.set(newValue, forKey: "character.expression") }
+    }
+    static var animation: String {
+        get { d.string(forKey: "character.animation") ?? "idle" }
+        set { d.set(newValue, forKey: "character.animation") }
+    }
+    static var shape: String { get { d.string(forKey: "character.shape") ?? "ghost" } set { d.set(newValue, forKey: "character.shape") } }
+    static var color: String { get { d.string(forKey: "character.color") ?? "#B9A2F5" } set { d.set(newValue, forKey: "character.color") } }
+    /// Track Claude Code and Codex independently, across restarts.
+    static var enabledSources: Set<String> {
+        get { Set(["claude", "codex"]).subtracting(d.stringArray(forKey: "sources.disabled") ?? []) }
+        set { d.set(Array(Set(["claude", "codex"]).subtracting(newValue)).sorted(), forKey: "sources.disabled") }
+    }
+    /// The places agents run in (Conductor, herdr, tmux, cmux, agterm) whose sessions you switched off: they get no row and
+    /// no card. All on until you switch one off.
+    static let placeIds = ["conductor", "herdr", "tmux", "cmux", "agterm", "iterm"]
+    static var placesOff: Set<String> { get { Set(d.stringArray(forKey: "places.disabled") ?? []) } set { d.set(Array(newValue).sorted(), forKey: "places.disabled") } }
+    /// Accessibility Perch had (AccessLoss): whether it ever had it, the build that last had it (a loss on another build came
+    /// with an update), and whether this loss was said, so a relaunch does not say it again.
+    /// nil on an install from before it was kept (AccessLoss.seeded).
+    static var accessHad: Bool? { get { d.object(forKey: "access.had") as? Bool } set { d.set(newValue, forKey: "access.had") } }
+    static var accessHadOn: String? { get { d.string(forKey: "access.hadOn") } set { d.set(newValue, forKey: "access.hadOn") } }
+    static var accessSaid: Bool { get { d.bool(forKey: "access.said") } set { d.set(newValue, forKey: "access.said") } }
+    /// The agent and folder you last started a new session with (NewSession.Choice id, folder path).
+    static var lastNewChoice: String? { get { d.string(forKey: "new.choice") } set { d.set(newValue, forKey: "new.choice") } }
+    static var lastNewFolder: String? { get { d.string(forKey: "new.folder") } set { d.set(newValue, forKey: "new.folder") } }
+    /// The terminal app you used most recently, so Pick up opens a closed terminal session there.
+    static var preferredTerminal: String? {
+        get { d.string(forKey: "terminal.preferred") }
+        set { d.set(newValue, forKey: "terminal.preferred") }
+    }
+    static var lastTerminal: String? { get { d.string(forKey: "terminal.last") } set { d.set(newValue, forKey: "terminal.last") } }
+    /// Where each terminal session last ran, by session id: {"kind": "herdr", "socket", "session", "workspace", "bin"} or
+    /// {"kind": "cmux"} or {"kind": "agterm"}. A session that stopped reopens there.
+    static var places: [String: [String: String]] {
+        get { d.dictionary(forKey: "places") as? [String: [String: String]] ?? [:] }
+        set { d.set(newValue, forKey: "places") }
+    }
+    /// When you last saw each session's latest activity (session id to time). Perch speaks up only about what changed since.
+    static var seen: [String: Double] { get { d.dictionary(forKey: "seen") as? [String: Double] ?? [:] } set { d.set(newValue, forKey: "seen") } }
+    /// Set once the sessions that existed before Perch was installed have been marked as seen.
+    static var seenBaselined: Bool { get { d.bool(forKey: "seen.baselined") } set { d.set(newValue, forKey: "seen.baselined") } }
+    /// Seconds an unanswered question stays in the notch as wings, after its first nine in full. 60 by default.
+    static var questionSeconds: Int {
+        get { let v = d.integer(forKey: "questionSeconds"); return [30, 60, 300].contains(v) ? v : 60 }
+        set { d.set(newValue, forKey: "questionSeconds") }
+    }
+    /// Whether resting the cursor on the top edge of a display without a notch opens Perch there. Off by default: such a
+    /// display shows nothing at rest, and the hotkey and the live activity still work on it.
+    static var hoverExternal: Bool {
+        get { d.object(forKey: "hoverExternal") as? Bool ?? true }
+        set { d.set(newValue, forKey: "hoverExternal") }
+    }
+    /// Where the shortcut opens Perch and where it shows up by itself (Show Perch on): the screen with the mouse by default.
+    static var showOn: ShowOn {
+        get { ShowOn(raw: d.string(forKey: "showOn") ?? "") }
+        set { d.set(newValue.raw, forKey: "showOn") }
+    }
+    /// The chosen display's name, so Settings can still name it while it is not connected.
+    static var showOnName: String? {
+        get { d.string(forKey: "showOnName") }
+        set { if let v = newValue { d.set(v, forKey: "showOnName") } else { d.removeObject(forKey: "showOnName") } }
+    }
+    /// The kinds of live activity switched off in Settings (Notify me about), as `NotifyKind` names. Empty by default: the notch announces everything.
+    static var notifyOff: Set<String> {
+        get { NotifyKinds.off(from: d.stringArray(forKey: "notifyOff") ?? []) }
+        set { d.set(newValue.sorted(), forKey: "notifyOff") }
+    }
+    /// Whether the character shows in the notch when an agent needs you, acting out the wait (Settings, Notifications). Off by default.
+    static var charAtNotch: Bool { get { d.object(forKey: "charAtNotch") as? Bool ?? true } set { d.set(newValue, forKey: "charAtNotch") } }
+    /// Whether sessions show their pull requests (the marks from the Claude app's own list). On by default.
+    static var prShow: Bool { get { d.object(forKey: "pr.show") as? Bool ?? true } set { d.set(newValue, forKey: "pr.show") } }
+    /// Whether Perch also asks GitHub, through the GitHub CLI's login, how each one stands (checks, reviews, conflicts). Off until switched on.
+    static var prChecks: Bool { get { d.bool(forKey: "pr.checks") } set { d.set(newValue, forKey: "pr.checks") } }
+    /// What opens and closes Perch: a tap of Command and Option unless you recorded your own.
+    static var openShortcut: Shortcut {
+        get { (d.data(forKey: "shortcut.open").flatMap { try? JSONDecoder().decode(Shortcut.self, from: $0) }).flatMap { Shortcut.problem($0) == nil ? $0 : nil } ?? .standard }
+        set { if newValue.isStandard { d.removeObject(forKey: "shortcut.open") } else if let data = try? JSONEncoder().encode(newValue) { d.set(data, forKey: "shortcut.open") } }
+    }
+    /// What starts a new session from anywhere: Option+Command+N unless you recorded your own. Always a key combo.
+    static let standardNew = Shortcut.combo([.option, .command], keyCode: 45, name: "N")
+    static var newShortcut: Shortcut {
+        get { (d.data(forKey: "shortcut.new").flatMap { try? JSONDecoder().decode(Shortcut.self, from: $0) }).flatMap { $0.kind == .combo && Shortcut.problem($0) == nil ? $0 : nil } ?? standardNew }
+        set { if newValue == standardNew { d.removeObject(forKey: "shortcut.new") } else if let data = try? JSONEncoder().encode(newValue) { d.set(data, forKey: "shortcut.new") } }
+    }
+    /// Minutes away before the welcome card comes back. 20 by default; 0 is Off: it never opens by itself after a break.
+    static var idleMinutes: Int {
+        get { d.object(forKey: "idleMinutes") == nil ? 20 : max(0, d.integer(forKey: "idleMinutes")) }
+        set { d.set(newValue, forKey: "idleMinutes") }
+    }
+}

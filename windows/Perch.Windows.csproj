@@ -2,5 +2,14 @@
   <PropertyGroup><Configuration Condition="'$(Configuration)' == ''">Release</Configuration><OutputType>WinExe</OutputType><AssemblyName>Perch</AssemblyName><RootNamespace>DeskToys</RootNamespace><TargetFrameworkVersion>v4.8</TargetFrameworkVersion><LangVersion>7.3</LangVersion><OutputPath>bin/$(Configuration)/</OutputPath><Optimize>true</Optimize><PlatformTarget>AnyCPU</PlatformTarget><Prefer32Bit>false</Prefer32Bit><ApplicationManifest>assets/app.manifest</ApplicationManifest><ApplicationIcon>assets/Perch.ico</ApplicationIcon><AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects></PropertyGroup>
   <ItemGroup><Reference Include="System"/><Reference Include="System.Core"/><Reference Include="System.Drawing"/><Reference Include="System.Management"/><Reference Include="System.Windows.Forms"/><Reference Include="System.Web.Extensions"/><Reference Include="System.Xml"/><Reference Include="Microsoft.CSharp"/><Reference Include="System.IO.Compression"/></ItemGroup>
   <ItemGroup><Compile Include="src/*.cs"/><EmbeddedResource Include="assets/Ocr.ps1"><LogicalName>DeskToys.Ocr.ps1</LogicalName></EmbeddedResource></ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="obj/PerchAgent.exe"><LogicalName>Perch.Agent.exe</LogicalName></EmbeddedResource>
+    <EmbeddedResource Include="../assets/agent-avatar/*.gif"><LogicalName>Perch.avatar.%(Filename)%(Extension)</LogicalName></EmbeddedResource>
+    <EmbeddedResource Include="../assets/agent-avatar/LICENSE"><LogicalName>Perch.avatar.LICENSE</LogicalName></EmbeddedResource>
+  </ItemGroup>
+  <Target Name="BuildAgentBridge" BeforeTargets="PrepareForBuild" Inputs="../agent/main.go;../agent/config.go;../agent/lock_windows.go;../agent/go.mod" Outputs="obj/PerchAgent.exe">
+    <MakeDir Directories="obj"/>
+    <Exec WorkingDirectory="../agent" EnvironmentVariables="GOOS=windows;GOARCH=386;CGO_ENABLED=0" Command="go build -trimpath -ldflags=&quot;-s -w&quot; -o ../windows/obj/PerchAgent.exe ."/>
+  </Target>
   <Import Project="$(MSBuildToolsPath)/Microsoft.CSharp.targets"/>
 </Project>

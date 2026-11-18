@@ -84,8 +84,7 @@ extension View {
     }
   }
   func tile(_ radius: CGFloat = 17) -> some View {
-    self.background(ScopeTheme.card, in: RoundedRectangle(cornerRadius: radius)).overlay(
-      RoundedRectangle(cornerRadius: radius).strokeBorder(.primary.opacity(0.04)))
+    self.modifier(TileSurface(radius: radius))
   }
 }
 struct ActivityCard: View {

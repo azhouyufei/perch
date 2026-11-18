@@ -8,9 +8,10 @@
 <key>CFBundleDevelopmentRegion</key><string>zh-Hans</string>
 <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>2.15.1</string>
-<key>CFBundleVersion</key><string>21</string>
+<key>CFBundleShortVersionString</key><string>2.17.8</string>
+<key>CFBundleVersion</key><string>31</string>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
+<key>NSAppleEventsUsageDescription</key><string>Perch opens the selected terminal session and delivers replies you send from the session island.</string>
 <key>CFBundleIconFile</key><string>Perch</string>
 <key>NSHighResolutionCapable</key><true/>
 </dict></plist>

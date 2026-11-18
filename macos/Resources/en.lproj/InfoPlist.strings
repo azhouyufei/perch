@@ -1,2 +1,3 @@
 "CFBundleName" = "Perch";
 "CFBundleDisplayName" = "Perch";
+"NSAppleEventsUsageDescription" = "Perch opens the selected terminal session and delivers replies you send from the session island.";

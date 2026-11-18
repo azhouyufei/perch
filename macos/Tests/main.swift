@@ -1,5 +1,6 @@
 import UserNotifications
 import AppKit
+import PerchIsland
 import ImageIO
 import ScreenCaptureKit
 
@@ -484,6 +485,31 @@ check(
   namedClaude.rows(tool: "Claude Code", path: "abc")[0].session == "abc",
   "presentation names preserve independent session identities")
 let quotaNow = Date()
+var usageCalendar = Calendar(identifier: .gregorian)
+usageCalendar.timeZone = TimeZone(identifier: "Asia/Shanghai")!
+let usageNow = ISO8601DateFormatter().date(from: "2026-11-18T02:00:00Z")!
+let usageMidnight = usageCalendar.startOfDay(for: usageNow)
+func usageRow(at date: Date, tool: String = "Codex", input: Int = 100) -> UsageRow {
+  UsageRow(date: date, tool: tool, session: "period-test", model: "test", project: "test", amount: UsageAmount(input: input, output: 20))
+}
+let usageRecords = [usageRow(at: usageMidnight.addingTimeInterval(-1)), usageRow(at: usageMidnight),
+  usageRow(at: usageNow), usageRow(at: usageMidnight.addingTimeInterval(86400))]
+let todayRecorded = RecordedUsage.inRange(usageRecords, days: 1, now: usageNow, calendar: usageCalendar)
+check(todayRecorded.count == 2 && RecordedUsage.total(todayRecorded) == 240,
+  "today includes the whole local calendar day and excludes adjacent days")
+check(RecordedUsage.total([]) == nil && RecordedUsage.display([]) == "—",
+  "unavailable local token records are not presented as zero account consumption")
+check(RecordedUsage.display(UsageTool.claude.filter(todayRecorded)) == "—"
+  && RecordedUsage.display(UsageTool.codex.filter(todayRecorded)) == "240",
+  "tool switching preserves the distinction between missing and recorded usage")
+let observedZero = UsageRow(date: usageNow, tool: "test", session: "zero", model: "test", project: "", amount: UsageAmount())
+check(RecordedUsage.display([observedZero]) == "0", "an explicit zero observation remains distinct from unavailable data")
+var dstCalendar = Calendar(identifier: .gregorian)
+dstCalendar.timeZone = TimeZone(identifier: "America/Los_Angeles")!
+let dstNow = ISO8601DateFormatter().date(from: "2026-11-01T20:00:00Z")!
+let lateDSTDay = ISO8601DateFormatter().date(from: "2026-11-02T07:30:00Z")!
+check(RecordedUsage.inRange([usageRow(at: lateDSTDay)], days: 1, now: dstNow, calendar: dstCalendar).count == 1,
+  "25-hour calendar days do not drop their final hour of usage")
 let futureReset = quotaNow.addingTimeInterval(3000).timeIntervalSince1970
 let statusData = event([
   "model": ["id": "claude-sonnet-4"],
@@ -523,6 +549,48 @@ quotaLog.consume(codexEvent, tool: "Codex")
 check(
   quotaLog.quota?.windows.first?.remaining == 88,
   "Codex quota is captured even without token totals")
+
+let liveWindow: [String: Any] = ["usedPercent": 31, "windowDurationMins": 300, "resetsAt": futureReset]
+let liveBucket: [String: Any] = ["limitId": "codex", "primary": liveWindow,
+  "secondary": ["usedPercent": 66, "windowDurationMins": 10080, "resetsAt": futureReset]]
+let livePayload: [String: Any] = [
+  "rateLimits": ["primary": ["usedPercent": 99, "windowDurationMins": 300, "resetsAt": futureReset]],
+  "rateLimitsByLimitId": ["codex": liveBucket, "codex_other": ["primary": liveWindow]]]
+let liveQuota = CodexQuota.sample(livePayload, now: quotaNow)
+check(liveQuota?.windows.map(\.remaining) == [69, 34] && liveQuota?.source == "codex-account",
+  "account quota prefers the Codex bucket over the legacy snapshot")
+check(CodexQuota.sample(["rateLimitsByLimitId": ["other": liveBucket], "rateLimits": liveBucket]) == nil,
+  "model-specific limits never masquerade as the general Codex allowance")
+check(CodexQuota.sample(["rateLimitsByLimitId": ["codex": NSNull()], "rateLimits": liveBucket]) == nil,
+  "unavailable current bucket cannot revive a legacy quota")
+check(CodexQuota.sample(["rateLimits": liveBucket])?.windows.first?.remaining == 69,
+  "older app servers without a multi-bucket response remain supported")
+check(CodexQuota.sample(["rateLimits": ["primary": ["usedPercent": 0]]]) == nil
+  && CodexQuota.sample(["rateLimits": ["primary": ["usedPercent": NSNull(), "windowDurationMins": 300, "resetsAt": futureReset]]]) == nil,
+  "missing quota fields are unavailable rather than full allowance")
+check(CodexQuota.sample(["rateLimits": ["primary": ["usedPercent": 120, "windowDurationMins": 300, "resetsAt": futureReset]]])?.windows.first?.remaining == 0,
+  "over-limit account percentages clamp to zero remaining")
+check(CodexQuota.sample(["rateLimits": liveBucket], now: quotaNow.addingTimeInterval(4000)) == nil,
+  "expired account windows are not reset to invented full allowance")
+let fakeCLI = root.appendingPathComponent("quota-cli")
+let reply = String(decoding: event(["id": 2, "result": livePayload]), as: UTF8.self)
+func quotaCLI(_ script: String) throws {
+  try ("#!/bin/sh\n" + script).write(to: fakeCLI, atomically: true, encoding: .utf8)
+  try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: fakeCLI.path)
+}
+try quotaCLI("read -r init\nprintf '%s\\n' '{\"id\":1,\"result\":{}}'\nread -r ready\nread -r request\nprintf '%s\\n' '\(reply)'\n")
+if case .success(let actual) = CodexQuota.fetch(executable: fakeCLI, timeout: 2) {
+  check(actual.windows.map(\.remaining) == [69, 34], "quota RPC handles handshake and account response")
+} else { check(false, "quota RPC handles handshake and account response") }
+try quotaCLI("read -r init\nprintf '%s\\n' '{\"id\":1,\"error\":{\"message\":\"unsupported\"}}'\n")
+if case .failure = CodexQuota.fetch(executable: fakeCLI, timeout: 2) {
+  check(true, "quota RPC rejects handshake errors")
+} else { check(false, "quota RPC rejects handshake errors") }
+try quotaCLI("read -r init\nread -r next\n")
+let timeoutBegin = Date()
+if case .failure(.timeout) = CodexQuota.fetch(executable: fakeCLI, timeout: 0.1) {
+  check(Date().timeIntervalSince(timeoutBegin) < 2, "quota RPC times out and reaps silent child")
+} else { check(false, "quota RPC times out and reaps silent child") }
 
 let drawSize = CGSize(width: 200, height: 100)
 let initialAnchor = CGPoint(x: 0.06, y: 0.15)
@@ -701,3 +769,25 @@ check(FittingColumns.count(for: 600, items: 4, minimum: 185, spacing: 10) == 2 &
       "narrow and wide dashboard cards retain readable label widths")
 check(FittingColumns.count(for: 600, items: 2, minimum: 332, spacing: 12) == 1,
       "monitor panels stack when two readable panels do not fit")
+
+// Readability must hold at every gradient stop and on the cards in both themes.
+func paletteLuminance(_ rgb: UInt32) -> Double {
+  let c = [Double((rgb >> 16) & 255), Double((rgb >> 8) & 255), Double(rgb & 255)].map {
+    let v = $0 / 255; return v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4)
+  }
+  return c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722
+}
+for dark in [false, true] {
+  let palette = PerchPalette(dark: dark)
+  for text in [PerchPalette.Token.ink, .muted] {
+    let fg = paletteLuminance(palette.rgb(text))
+    let readable = [PerchPalette.Token.start, .middle, .end, .card].allSatisfy {
+      let bg = paletteLuminance(palette.rgb($0)); return (max(fg, bg) + 0.05) / (min(fg, bg) + 0.05) >= 4.5
+    }
+    check(readable, "\(dark ? "dark" : "light") \(text) text meets 4.5:1 contrast across gradient and cards")
+  }
+  let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)!
+  check(PerchPalette(appearance: appearance).dark == dark, "native and island resolve the same appearance \(dark)")
+  check(palette.cssVariables["--perch-ink"] == String(format: "#%06X", palette.rgb(.ink)),
+        "web bridge exports the shared native foreground \(dark)")
+}

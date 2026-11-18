@@ -1,0 +1,588 @@
+{
+  "island": {
+    "phase": "switcher",
+    "screen": {
+      "hasNotch": false,
+      "notchW": 148,
+      "notchH": 28
+    },
+    "selected": 0,
+    "shown": [
+      0,
+      1,
+      2
+    ],
+    "icons": {},
+    "character": {
+      "shape": "ghost",
+      "color": "#B9A2F5",
+      "expression": "happy",
+      "animation": "idle"
+    },
+    "timerToken": 1,
+    "activeIds": [],
+    "quiet": false,
+    "scanning": false,
+    "canSend": true,
+    "autoCollapse": false,
+    "notifyOff": [],
+    "newKeys": [
+      "⌥",
+      "⌘",
+      "N"
+    ],
+    "projects": [
+      {
+        "id": "docs-session-0",
+        "name": "Perch",
+        "branch": "main",
+        "app": "claude",
+        "via": "iterm",
+        "away": "2m",
+        "at": "10:24",
+        "headline": "Review the release checklist",
+        "context": "The documentation is ready. May I run the regression checks before packaging?",
+        "next": "Review changes",
+        "topic": "Review the release checklist",
+        "attention": true,
+        "fresh": true,
+        "line": "Waiting for you",
+        "status": {
+          "kind": "attention",
+          "text": "Needs your OK",
+          "app": "claude"
+        },
+        "steps": [],
+        "ask": null,
+        "now": null,
+        "section": "Needs you",
+        "said": "The documentation is ready. May I run the regression checks before packaging?",
+        "asked": "Prepare the release and update the documentation.",
+        "manage": [],
+        "canReply": true
+      },
+      {
+        "id": "docs-session-1",
+        "name": "Website",
+        "branch": "main",
+        "app": "codex",
+        "via": null,
+        "away": "2m",
+        "at": "10:24",
+        "headline": "Polish the settings screen",
+        "context": "I am checking the light and dark layouts.",
+        "next": "Review changes",
+        "topic": "Polish the settings screen",
+        "attention": false,
+        "fresh": true,
+        "line": "Finished just now",
+        "status": {
+          "kind": "running",
+          "text": "Working",
+          "app": "codex"
+        },
+        "steps": [],
+        "ask": null,
+        "now": "Checking the theme settings",
+        "section": "Today",
+        "said": "I am checking the light and dark layouts.",
+        "asked": "Prepare the release and update the documentation.",
+        "manage": [],
+        "canReply": true
+      },
+      {
+        "id": "docs-session-2",
+        "name": "Mobile app",
+        "branch": "main",
+        "app": "codex",
+        "via": null,
+        "away": "2m",
+        "at": "10:24",
+        "headline": "Add keyboard shortcuts",
+        "context": "Added the shortcut preferences and checked the default bindings.",
+        "next": "Review changes",
+        "topic": "Add keyboard shortcuts",
+        "attention": false,
+        "fresh": true,
+        "line": "Finished just now",
+        "status": {
+          "kind": "done",
+          "text": "Finished",
+          "app": "codex"
+        },
+        "steps": [],
+        "ask": null,
+        "now": null,
+        "section": "Today",
+        "said": "Added the shortcut preferences and checked the default bindings.",
+        "asked": "Prepare the release and update the documentation.",
+        "manage": [],
+        "canReply": true
+      }
+    ]
+  },
+  "conversation": {
+    "phase": "open",
+    "screen": {
+      "hasNotch": false,
+      "notchW": 148,
+      "notchH": 28
+    },
+    "selected": 0,
+    "shown": [
+      0,
+      1,
+      2
+    ],
+    "icons": {},
+    "character": {
+      "shape": "ghost",
+      "color": "#B9A2F5",
+      "expression": "happy",
+      "animation": "idle"
+    },
+    "timerToken": 1,
+    "activeIds": [],
+    "quiet": false,
+    "scanning": false,
+    "canSend": true,
+    "autoCollapse": false,
+    "notifyOff": [],
+    "newKeys": [
+      "⌥",
+      "⌘",
+      "N"
+    ],
+    "projects": [
+      {
+        "id": "docs-session-0",
+        "name": "Perch",
+        "branch": "main",
+        "app": "claude",
+        "via": "iterm",
+        "away": "2m",
+        "at": "10:24",
+        "headline": "Review the release checklist",
+        "context": "The documentation is ready. May I run the regression checks before packaging?",
+        "next": "Review changes",
+        "topic": "Review the release checklist",
+        "attention": true,
+        "fresh": true,
+        "line": "Waiting for you",
+        "status": {
+          "kind": "attention",
+          "text": "Needs your OK",
+          "app": "claude"
+        },
+        "steps": [],
+        "ask": null,
+        "now": null,
+        "section": "Needs you",
+        "said": "The documentation is ready. May I run the regression checks before packaging?",
+        "asked": "Prepare the release and update the documentation.",
+        "manage": [],
+        "canReply": true
+      },
+      {
+        "id": "docs-session-1",
+        "name": "Website",
+        "branch": "main",
+        "app": "codex",
+        "via": null,
+        "away": "2m",
+        "at": "10:24",
+        "headline": "Polish the settings screen",
+        "context": "I am checking the light and dark layouts.",
+        "next": "Review changes",
+        "topic": "Polish the settings screen",
+        "attention": false,
+        "fresh": true,
+        "line": "Finished just now",
+        "status": {
+          "kind": "running",
+          "text": "Working",
+          "app": "codex"
+        },
+        "steps": [],
+        "ask": null,
+        "now": "Checking the theme settings",
+        "section": "Today",
+        "said": "I am checking the light and dark layouts.",
+        "asked": "Prepare the release and update the documentation.",
+        "manage": [],
+        "canReply": true
+      },
+      {
+        "id": "docs-session-2",
+        "name": "Mobile app",
+        "branch": "main",
+        "app": "codex",
+        "via": null,
+        "away": "2m",
+        "at": "10:24",
+        "headline": "Add keyboard shortcuts",
+        "context": "Added the shortcut preferences and checked the default bindings.",
+        "next": "Review changes",
+        "topic": "Add keyboard shortcuts",
+        "attention": false,
+        "fresh": true,
+        "line": "Finished just now",
+        "status": {
+          "kind": "done",
+          "text": "Finished",
+          "app": "codex"
+        },
+        "steps": [],
+        "ask": null,
+        "now": null,
+        "section": "Today",
+        "said": "Added the shortcut preferences and checked the default bindings.",
+        "asked": "Prepare the release and update the documentation.",
+        "manage": [],
+        "canReply": true
+      }
+    ]
+  },
+  "character": {
+    "phase": "onboarding",
+    "screen": {
+      "hasNotch": false,
+      "notchW": 148,
+      "notchH": 28
+    },
+    "selected": 0,
+    "shown": [
+      0,
+      1,
+      2
+    ],
+    "icons": {},
+    "character": {
+      "shape": "ghost",
+      "color": "#B9A2F5",
+      "expression": "happy",
+      "animation": "idle"
+    },
+    "timerToken": 1,
+    "activeIds": [],
+    "quiet": false,
+    "scanning": false,
+    "canSend": true,
+    "autoCollapse": false,
+    "notifyOff": [],
+    "newKeys": [
+      "⌥",
+      "⌘",
+      "N"
+    ],
+    "projects": [
+      {
+        "id": "docs-session-0",
+        "name": "Perch",
+        "branch": "main",
+        "app": "claude",
+        "via": "iterm",
+        "away": "2m",
+        "at": "10:24",
+        "headline": "Review the release checklist",
+        "context": "The documentation is ready. May I run the regression checks before packaging?",
+        "next": "Review changes",
+        "topic": "Review the release checklist",
+        "attention": true,
+        "fresh": true,
+        "line": "Waiting for you",
+        "status": {
+          "kind": "attention",
+          "text": "Needs your OK",
+          "app": "claude"
+        },
+        "steps": [],
+        "ask": null,
+        "now": null,
+        "section": "Needs you",
+        "said": "The documentation is ready. May I run the regression checks before packaging?",
+        "asked": "Prepare the release and update the documentation.",
+        "manage": [],
+        "canReply": true
+      },
+      {
+        "id": "docs-session-1",
+        "name": "Website",
+        "branch": "main",
+        "app": "codex",
+        "via": null,
+        "away": "2m",
+        "at": "10:24",
+        "headline": "Polish the settings screen",
+        "context": "I am checking the light and dark layouts.",
+        "next": "Review changes",
+        "topic": "Polish the settings screen",
+        "attention": false,
+        "fresh": true,
+        "line": "Finished just now",
+        "status": {
+          "kind": "running",
+          "text": "Working",
+          "app": "codex"
+        },
+        "steps": [],
+        "ask": null,
+        "now": "Checking the theme settings",
+        "section": "Today",
+        "said": "I am checking the light and dark layouts.",
+        "asked": "Prepare the release and update the documentation.",
+        "manage": [],
+        "canReply": true
+      },
+      {
+        "id": "docs-session-2",
+        "name": "Mobile app",
+        "branch": "main",
+        "app": "codex",
+        "via": null,
+        "away": "2m",
+        "at": "10:24",
+        "headline": "Add keyboard shortcuts",
+        "context": "Added the shortcut preferences and checked the default bindings.",
+        "next": "Review changes",
+        "topic": "Add keyboard shortcuts",
+        "attention": false,
+        "fresh": true,
+        "line": "Finished just now",
+        "status": {
+          "kind": "done",
+          "text": "Finished",
+          "app": "codex"
+        },
+        "steps": [],
+        "ask": null,
+        "now": null,
+        "section": "Today",
+        "said": "Added the shortcut preferences and checked the default bindings.",
+        "asked": "Prepare the release and update the documentation.",
+        "manage": [],
+        "canReply": true
+      }
+    ],
+    "onboarding": {
+      "step": 1,
+      "total": 7,
+      "accessibility": true,
+      "scanning": false,
+      "sources": [
+        {
+          "id": "claude",
+          "name": "Claude Code",
+          "count": 1,
+          "names": [
+            "Perch"
+          ],
+          "enabled": true
+        },
+        {
+          "id": "codex",
+          "name": "Codex",
+          "count": 2,
+          "names": [
+            "Website",
+            "Mobile app"
+          ],
+          "enabled": true
+        }
+      ],
+      "places": [],
+      "only": true,
+      "live": "on",
+      "shortcut": {
+        "keys": [
+          "⌃",
+          "⌥",
+          "Space"
+        ],
+        "kind": "combo",
+        "custom": false,
+        "recording": false,
+        "error": "",
+        "tried": false,
+        "saved": false,
+        "works": true,
+        "why": "",
+        "attempt": [],
+        "refusals": 0,
+        "pending": [],
+        "picks": 0
+      }
+    }
+  },
+  "setup": {
+    "phase": "onboarding",
+    "screen": {
+      "hasNotch": false,
+      "notchW": 148,
+      "notchH": 28
+    },
+    "selected": 0,
+    "shown": [
+      0,
+      1,
+      2
+    ],
+    "icons": {},
+    "character": {
+      "shape": "ghost",
+      "color": "#B9A2F5",
+      "expression": "happy",
+      "animation": "idle"
+    },
+    "timerToken": 1,
+    "activeIds": [],
+    "quiet": false,
+    "scanning": false,
+    "canSend": true,
+    "autoCollapse": false,
+    "notifyOff": [],
+    "newKeys": [
+      "⌥",
+      "⌘",
+      "N"
+    ],
+    "projects": [
+      {
+        "id": "docs-session-0",
+        "name": "Perch",
+        "branch": "main",
+        "app": "claude",
+        "via": "iterm",
+        "away": "2m",
+        "at": "10:24",
+        "headline": "Review the release checklist",
+        "context": "The documentation is ready. May I run the regression checks before packaging?",
+        "next": "Review changes",
+        "topic": "Review the release checklist",
+        "attention": true,
+        "fresh": true,
+        "line": "Waiting for you",
+        "status": {
+          "kind": "attention",
+          "text": "Needs your OK",
+          "app": "claude"
+        },
+        "steps": [],
+        "ask": null,
+        "now": null,
+        "section": "Needs you",
+        "said": "The documentation is ready. May I run the regression checks before packaging?",
+        "asked": "Prepare the release and update the documentation.",
+        "manage": [],
+        "canReply": true
+      },
+      {
+        "id": "docs-session-1",
+        "name": "Website",
+        "branch": "main",
+        "app": "codex",
+        "via": null,
+        "away": "2m",
+        "at": "10:24",
+        "headline": "Polish the settings screen",
+        "context": "I am checking the light and dark layouts.",
+        "next": "Review changes",
+        "topic": "Polish the settings screen",
+        "attention": false,
+        "fresh": true,
+        "line": "Finished just now",
+        "status": {
+          "kind": "running",
+          "text": "Working",
+          "app": "codex"
+        },
+        "steps": [],
+        "ask": null,
+        "now": "Checking the theme settings",
+        "section": "Today",
+        "said": "I am checking the light and dark layouts.",
+        "asked": "Prepare the release and update the documentation.",
+        "manage": [],
+        "canReply": true
+      },
+      {
+        "id": "docs-session-2",
+        "name": "Mobile app",
+        "branch": "main",
+        "app": "codex",
+        "via": null,
+        "away": "2m",
+        "at": "10:24",
+        "headline": "Add keyboard shortcuts",
+        "context": "Added the shortcut preferences and checked the default bindings.",
+        "next": "Review changes",
+        "topic": "Add keyboard shortcuts",
+        "attention": false,
+        "fresh": true,
+        "line": "Finished just now",
+        "status": {
+          "kind": "done",
+          "text": "Finished",
+          "app": "codex"
+        },
+        "steps": [],
+        "ask": null,
+        "now": null,
+        "section": "Today",
+        "said": "Added the shortcut preferences and checked the default bindings.",
+        "asked": "Prepare the release and update the documentation.",
+        "manage": [],
+        "canReply": true
+      }
+    ],
+    "onboarding": {
+      "step": 4,
+      "total": 7,
+      "accessibility": true,
+      "scanning": false,
+      "sources": [
+        {
+          "id": "claude",
+          "name": "Claude Code",
+          "count": 1,
+          "names": [
+            "Perch"
+          ],
+          "enabled": true
+        },
+        {
+          "id": "codex",
+          "name": "Codex",
+          "count": 2,
+          "names": [
+            "Website",
+            "Mobile app"
+          ],
+          "enabled": true
+        }
+      ],
+      "places": [],
+      "only": false,
+      "live": "on",
+      "shortcut": {
+        "keys": [
+          "⌃",
+          "⌥",
+          "Space"
+        ],
+        "kind": "combo",
+        "custom": false,
+        "recording": false,
+        "error": "",
+        "tried": false,
+        "saved": false,
+        "works": true,
+        "why": "",
+        "attempt": [],
+        "refusals": 0,
+        "pending": [],
+        "picks": 0
+      }
+    }
+  }
+}

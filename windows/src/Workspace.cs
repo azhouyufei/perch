@@ -630,6 +630,17 @@ sealed partial class Workspace
                                  key.DeleteValue("Perch", false);
                          }
                      }));
+        Section(Data.T("AI 会话提醒", "AI session alerts"));
+        foreach (var agent in new[] { "claude", "codex" }) {
+            var check = UI.Check(agent == "claude" ? "Claude Code" : "Codex", agentAlerts.Enabled(agent), value => {
+                try { agentAlerts.Toggle(agent, value); }
+                catch (Exception e) { Report(e.Message); Navigate(6); }
+            });
+            Bar(check);
+        }
+        Bar(UI.Label(Data.T("启用后请新开会话，并在 Codex 中信任该 hook。", "Start a new session after enabling, and trust the hook in Codex.")));
+        Bar(agentAlerts.PendingButton());
+        if (!string.IsNullOrEmpty(agentAlerts.Error)) Bar(UI.Label(agentAlerts.Error));
         Section(Data.T("系统监控与托盘", "Monitor and tray"));
         var layouts = new[] { "dual", "hardware", "network", "icon" };
         Bar(UI.Label(Data.T("采样间隔", "Sampling interval")),

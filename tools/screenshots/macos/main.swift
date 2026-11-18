@@ -1,8 +1,10 @@
 import AppKit
 import SwiftUI
+import WebKit
+import PerchIsland
 
 // Publish only demo sessions. Each run gets an isolated cache and isolated log roots.
-final class ScreenshotDelegate: NSObject, NSApplicationDelegate {
+final class ScreenshotDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKScriptMessageHandler {
   let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
   let output = URL(fileURLWithPath: Bundle.main.object(forInfoDictionaryKey: "ScreenshotDirectory") as! String)
   var window: NSWindow!
@@ -12,8 +14,9 @@ final class ScreenshotDelegate: NSObject, NSApplicationDelegate {
   let popover = NSPopover()
   lazy var statusAppearance = StatusAppearance(popover: popover)
   var sampleShot: Shot!
+  var islandWeb: WKWebView?
   var step = 0
-  let scenes = ["usage", "dashboard", "annotation", "clipboard", "note", "panel", "network"]
+  let scenes = ["usage", "dashboard", "annotation", "clipboard", "note", "panel", "network", "island", "conversation", "character", "setup"]
   var dark = false
   let menuOwner = AppDelegate()
 
@@ -88,6 +91,10 @@ final class ScreenshotDelegate: NSObject, NSApplicationDelegate {
     let scene = scenes[step]
     NSApp.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
     var subject = window!
+    if ["island", "conversation", "character", "setup"].contains(scene) {
+      captureIsland(scene); return
+    }
+    window.setContentSize(NSSize(width: 1100, height: 760))
     switch scene {
     case "usage", "dashboard", "clipboard":
       studio.page = scene == "usage" ? .usage : scene == "clipboard" ? .clipboard : .overview
@@ -135,14 +142,73 @@ final class ScreenshotDelegate: NSObject, NSApplicationDelegate {
           popover.close()
           if scene == "network" { captureMenu() }
         }
-        step += 1
-        if step == scenes.count {
-          if dark { NSApp.terminate(nil); return }
-          step = 0; dark = true
-        }
-        showScene()
+        nextScene()
       } catch { fail(error) }
     }
+  }
+  func nextScene() {
+    step += 1
+    if step == scenes.count {
+      if dark { NSApp.terminate(nil); return }
+      step = 0; dark = true
+    }
+    showScene()
+  }
+  func captureIsland(_ scene: String) {
+    if islandWeb == nil {
+      let config = WKWebViewConfiguration()
+      config.userContentController.add(self, name: "perch")
+      let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 480, height: 720), configuration: config)
+      web.navigationDelegate = self
+      web.setValue(false, forKey: "drawsBackground")
+      web.underPageBackgroundColor = .clear
+      islandWeb = web
+      let url = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "ui")!
+      window.contentView = web
+      window.setContentSize(NSSize(width: 480, height: 720))
+      web.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+    } else { drawIsland(scene) }
+  }
+  func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { drawIsland(scenes[step]) }
+  func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {}
+  func drawIsland(_ scene: String) {
+    do {
+      let data = try Data(contentsOf: Bundle.main.url(forResource: "island-fixtures", withExtension: "json")!)
+      let fixtures = try JSONSerialization.jsonObject(with: data) as! [String: [String: Any]]
+      var fixture = fixtures[scene]!
+      fixture["appearance"] = dark ? "dark" : "light"
+      fixture["palette"] = PerchPalette(dark: dark).cssVariables
+      let json = String(data: try JSONSerialization.data(withJSONObject: fixture), encoding: .utf8)!
+      window.contentView = islandWeb
+      window.setContentSize(NSSize(width: 480, height: 720))
+      window.makeKeyAndOrderFront(nil)
+      islandWeb!.evaluateJavaScript("if (!document.getElementById('docs-still')) { var style = document.createElement('style'); style.id='docs-still'; style.textContent='*,*::before,*::after{animation:none!important;transition:none!important}'; document.head.appendChild(style); } window.perch.apply(\(json));") { [self] _, error in
+        if let error { fail(error); return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) { [self] in
+          islandWeb!.evaluateJavaScript("JSON.stringify(document.querySelector('.n').getBoundingClientRect().toJSON())") { [self] value, error in
+            if let error { fail(error); return }
+            guard let value = value as? String, let bytes = value.data(using: .utf8),
+                  let rect = (try? JSONSerialization.jsonObject(with: bytes)) as? [String: Double],
+                  let left = rect["left"], let width = rect["width"], let bottom = rect["bottom"], width >= 390, bottom >= 100
+            else { fail(CocoaError(.fileReadCorruptFile)); return }
+            let height = CGFloat(ceil(bottom) + 12)
+            let config = WKSnapshotConfiguration()
+            config.rect = NSRect(x: left - 16, y: 0, width: width + 32, height: min(720, height))
+            config.snapshotWidth = NSNumber(value: width + 32)
+            islandWeb!.takeSnapshot(with: config) { [self] image, error in
+              do {
+                if let error { throw error }
+                guard let tiff = image?.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
+                      let png = rep.representation(using: .png, properties: [:]) else { throw CocoaError(.fileReadUnknown) }
+                let name = "macos-\(scene)-\(dark ? "dark" : "light").png"
+                try png.write(to: output.appendingPathComponent(name), options: .atomic)
+                nextScene()
+              } catch { fail(error) }
+            }
+          }
+        }
+      }
+    } catch { fail(error) }
   }
   // Capture only a menu window owned by this documentation process.
   func captureMenu() {

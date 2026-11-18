@@ -1,2 +1,3 @@
 "CFBundleName" = "Perch";
 "CFBundleDisplayName" = "Perch";
+"NSAppleEventsUsageDescription" = "Perch 会打开你选择的终端会话，并将你在灵动岛发送的回复送到该会话。";

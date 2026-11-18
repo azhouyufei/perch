@@ -48,6 +48,22 @@ struct UsageRow: Identifiable {
   var title: String = L("未命名会话")
   var total: Int { amount.total }
 }
+enum RecordedUsage {
+  static func inRange(_ rows: [UsageRow], days: Int, now: Date = Date(), calendar: Calendar = .current) -> [UsageRow] {
+    guard days > 0 else { return [] }
+    let today = calendar.startOfDay(for: now)
+    guard let start = calendar.date(byAdding: .day, value: 1 - days, to: today),
+      let end = calendar.date(byAdding: .day, value: 1, to: today) else { return [] }
+    return rows.filter { $0.date >= start && $0.date < end }
+  }
+  /// No readable observations is not evidence of zero account consumption.
+  static func total(_ rows: [UsageRow]) -> Int? {
+    rows.isEmpty ? nil : rows.reduce(0) { $0 + $1.total }
+  }
+  static func display(_ rows: [UsageRow]) -> String {
+    total(rows).map(shortTokens) ?? "—"
+  }
+}
 struct QuotaWindow: Codable {
   let percent: Double, minutes: Int, reset: Date
 }
@@ -302,11 +318,16 @@ final class UsageStore: ObservableObject {
   }
   @Published private(set) var rows: [UsageRow] = []
   @Published private(set) var quota: QuotaSample?
+  @Published private(set) var codexQuotaStatus = L("正在查询 Codex 账户额度…")
   @Published private(set) var claudeQuota: QuotaSample?
   @Published private(set) var claudeRoute = ClaudeRoute.unknown
   @Published private(set) var status = L("正在读取本机会话…")
   @Published private(set) var scanning = false
   private let queue = DispatchQueue(label: "glint.usage", qos: .utility)
+  private let quotaQueue = DispatchQueue(label: "perch.codex-quota", qos: .utility)
+  private var quotaRefreshing = false
+  private var lastQuotaRequest = Date.distantPast
+  private var quotaGeneration = 0
   private var timer: Timer?
   private var files: [String: UsageFile] = [:]
   private var titleSources = [String]()
@@ -345,7 +366,7 @@ final class UsageStore: ObservableObject {
   func start() {
     consumers += 1
     guard timer == nil else { return }
-    refresh()
+    refresh(forceQuota: true)
     timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
       self?.refresh()
     }
@@ -355,6 +376,8 @@ final class UsageStore: ObservableObject {
     guard consumers == 0 else { return }
     timer?.invalidate()
     timer = nil
+    quotaGeneration += 1
+    quota = nil
     queue.async { [self] in
       files.removeAll()
       codexNames.removeAll()
@@ -363,10 +386,41 @@ final class UsageStore: ObservableObject {
       loaded = false
     }
   }
-  func refresh() {
+  private func refreshCodexQuota(force: Bool) {
+    guard !quotaRefreshing, force || Date().timeIntervalSince(lastQuotaRequest) >= 60 else { return }
+    quotaRefreshing = true
+    lastQuotaRequest = Date()
+    let generation = quotaGeneration
+    if quota == nil { codexQuotaStatus = L("正在查询 Codex 账户额度…") }
+    quotaQueue.async { [weak self] in
+      let result = CodexQuota.fetch()
+      DispatchQueue.main.async { [weak self] in
+        guard let self else { return }
+        self.quotaRefreshing = false
+        guard generation == self.quotaGeneration else {
+          if self.consumers > 0 { self.refreshCodexQuota(force: true) }
+          return
+        }
+        switch result {
+        case .success(let sample):
+          self.quota = sample
+          self.codexQuotaStatus = L("Codex 当前登录账户 · ")
+            + sample.date.formatted(date: .omitted, time: .shortened)
+        case .failure(let error):
+          // Never replace a failed account read with another account's transcript snapshot.
+          self.quota = nil
+          self.codexQuotaStatus = error == .missingCLI
+            ? L("未找到 Codex，请安装或更新 Codex 后重试")
+            : L("Codex 额度暂不可用，请检查 Codex 登录状态和网络")
+        }
+      }
+    }
+  }
+  func refresh(forceQuota: Bool = false) {
     #if PERCH_SCREENSHOTS
     if hasSampleData { return }
     #endif
+    refreshCodexQuota(force: forceQuota)
     guard !scanning else { return }
     scanning = true
     queue.async { [self] in
@@ -444,7 +498,6 @@ final class UsageStore: ObservableObject {
       titleSources = external
       var changed = initialScan && !fm.fileExists(atPath: cache.path)
       var errors = 0
-      var sourceFiles = [(String, String)]()
       for (tool, root) in roots where fm.fileExists(atPath: root.path) {
         let entries = fm.enumerator(
           at: root, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles],
@@ -469,7 +522,6 @@ final class UsageStore: ObservableObject {
               files[u.path] = state
               changed = true
             }
-            sourceFiles.append((tool, u.path))
           } catch { errors += 1 }
         }
       }
@@ -489,12 +541,6 @@ final class UsageStore: ObservableObject {
         try? d.write(to: cache, options: .atomic)
       }
       let rows = mergedRows()
-      func latest(_ tool: String) -> QuotaSample? {
-        sourceFiles.filter { $0.0 == tool }.compactMap { files[$0.1]?.quota }.max {
-          $0.date < $1.date
-        }
-      }
-      let q = latest("Codex")
       let bridged = (try? Data(contentsOf: ClaudeQuota.file)).flatMap {
         try? JSONDecoder().decode(QuotaSample.self, from: $0)
       }
@@ -506,7 +552,6 @@ final class UsageStore: ObservableObject {
           ? L("未发现含用量记录的 本地 AI 会话") : L("已更新 · ") + Date().formatted(date: .omitted, time: .shortened)
       DispatchQueue.main.async {
         self.rows = rows
-        self.quota = q
         self.claudeRoute = route
         self.claudeQuota = claude
         self.status = status

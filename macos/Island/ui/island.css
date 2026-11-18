@@ -1,0 +1,69 @@
+.cr blob-avatar { position:absolute; inset:-12%; width:124%; height:124%; pointer-events:none }
+.blob-shapes { display:grid; grid-template-columns:repeat(7, 28px); gap:4px }
+.blob-shapes .o-shape { width:28px; height:28px; border-radius:6px }
+.blob-custom { display:inline-grid; place-items:center; border:1px solid #999; border-radius:50%; width:20px; height:20px; background:conic-gradient(#ff9898,#efd675,#7edfa4,#87b3ff,#c18df1,#ff9898); overflow:hidden }
+.blob-custom input { width:20px; height:20px; cursor:pointer; opacity:0 }
+.blob-options { display:flex; gap:16px; padding:12px 16px 0; color:#afafb5; font-size:12px }
+.blob-options label { display:flex; align-items:center; gap:6px }
+.blob-options select { border-radius:5px; padding:3px 4px; background:#28282b; color:white; color-scheme:dark }
+
+/* The app supplies these tokens from PerchPalette; fallbacks also support web previews. */
+:root {
+  color-scheme: dark;
+  --perch-start: #211F30; --perch-middle: #151C29; --perch-end: #10141C;
+  --perch-card: #232836; --perch-raised: #343A4B;
+  --perch-ink: #F4F5FC; --perch-ink-rgb: 244,245,252;
+  --perch-inverse: #202432; --perch-inverse-rgb: 32,36,50;
+  --perch-muted: #ABB2C5;
+  --perch-middle-hsl: 219 32% 12%; --perch-ink-hsl: 233 57% 97%;
+  --perch-raised-hsl: 224 18% 25%; --perch-muted-hsl: 224 18% 72%;
+  --perch-inverse-hsl: 227 22% 16%;
+  --status-attention: #E9A877; --status-done: #8CCFA4; --status-running: #8DC8E8;
+  --perch-gradient: linear-gradient(135deg, var(--perch-start) 0%, var(--perch-middle) 52%, var(--perch-end) 100%);
+}
+:root[data-appearance="light"] {
+  color-scheme: light;
+  --perch-start: #F5F3FB; --perch-middle: #F1F5FA; --perch-end: #EAEFF8;
+  --perch-card: #FFFFFF; --perch-raised: #E0E4EF;
+  --perch-ink: #202432; --perch-ink-rgb: 32,36,50;
+  --perch-inverse: #F4F5FC; --perch-inverse-rgb: 244,245,252;
+  --perch-muted: #5B6478;
+  --perch-middle-hsl: 213 47% 96%; --perch-ink-hsl: 227 22% 16%;
+  --perch-raised-hsl: 224 32% 91%; --perch-muted-hsl: 221 14% 41%;
+  --perch-inverse-hsl: 233 57% 97%;
+  --status-attention: #9A4B19; --status-done: #267340; --status-running: #176B9A;
+}
+.perch {
+  --background: var(--perch-middle-hsl); --foreground: var(--perch-ink-hsl);
+  --muted: var(--perch-raised-hsl); --muted-foreground: var(--perch-muted-hsl);
+  --accent: var(--perch-raised-hsl); --accent-foreground: var(--perch-ink-hsl);
+  --border: var(--perch-raised-hsl); --primary: var(--perch-ink-hsl);
+  --primary-foreground: var(--perch-inverse-hsl); --ring: var(--perch-muted-hsl);
+}
+/* The shaped notch paints on ::after. Painting both layers leaves square corners. */
+.n, .n::after { background: var(--perch-gradient); }
+.n[data-shape="1"] { background: transparent; }
+/* A resting island has no surface: the physical camera cutout belongs to the display.
+   Clear both paint layers immediately, including the external display's delayed hide
+   animation, so Space transitions cannot expose an empty light-colored notch. */
+.n[data-s="idle"]:not([data-act]),
+.n[data-s="idle"][data-act=""],
+.n[data-s="idle"]:not([data-act])::after,
+.n[data-s="idle"][data-act=""]::after { background: transparent; }
+
+.n:not([data-s=idle])::before { background: var(--perch-start); }
+.ear.l { background: radial-gradient(circle at 0 100%,transparent 5.5px,var(--perch-start) 6px); }
+.ear.r { background: radial-gradient(circle at 100% 100%,transparent 5.5px,var(--perch-start) 6px); }
+.cr .dot, .cr .say, .tb { background: var(--perch-middle); color: var(--perch-ink); }
+.pv-tile { background: color-mix(in srgb,var(--cr) 9%,var(--perch-card)); }
+.blob-options { color: var(--perch-muted); }
+.blob-options select { background: var(--perch-raised); color: var(--perch-ink); color-scheme: inherit; }
+.pr-tip { background: var(--perch-card); }
+.act-b.go kbd, .act-b.on kbd { background: rgba(var(--perch-inverse-rgb),.10); color: var(--perch-inverse); }
+.bg-black\/40, .bg-black\/\[0\.18\] { background-color: rgba(var(--perch-inverse-rgb),.18); }
+.text-\[\#8CCFA4\] { color: var(--status-done); }
+html[data-appearance="light"] .hl i { mix-blend-mode: multiply; }
+html[data-appearance="light"] .md-code { color: #66518A; }
+html[data-appearance="light"] .o-orb { color: #66518A; }
+/* Keep keycaps on primary actions legible in either theme. */
+.bg-primary .bg-black\/\[0\.18\] { color: var(--perch-inverse); }

@@ -532,3 +532,35 @@
 "语言选择已保存。你也可以继续使用，新的语言会在下次打开时生效。" = "Your language preference is saved. If you choose Later, it will take effect the next time you open Perch.";
 "窗口" = "Window";
 "关闭窗口" = "Close Window";
+"AI 会话提醒" = "AI session alerts";
+"请回到会话确认权限" = "Return to the session to review a permission request";
+"请回到会话回答问题" = "Return to the session to answer";
+"收起提醒" = "Dismiss alert";
+"查看待处理提醒" = "Show pending requests";
+"监听已中断，请重新启用提醒。" = "The listener stopped. Toggle alerts to reconnect.";
+"通过本地 hook 提醒审批和提问。启用后请新开会话，并在 Codex 中信任该 hook。" = "Local hooks alert you to approvals and questions. Start a new session after enabling, and trust the hook in Codex.";
+"复制恢复会话命令" = "Copy resume command";
+"AI 会话灵动岛" = "AI Session Island";
+"打开会话" = "Open sessions";
+"设置向导" = "Setup guide";
+"角色外观" = "Character appearance";
+"灵动岛设置" = "Island settings";
+"默认终端" = "Default terminal";
+"自动（最近使用）" = "Automatic (last used)";
+
+// Current Codex account quota
+"正在查询 Codex 账户额度…" = "Checking Codex account limits…";
+"Codex 当前登录账户 · " = "Codex signed-in account · ";
+"未找到 Codex，请安装或更新 Codex 后重试" = "Codex was not found. Install or update Codex and retry.";
+"Codex 额度暂不可用，请检查 Codex 登录状态和网络" = "Codex limits are unavailable. Check your Codex login and connection.";
+
+// Token coverage and missing observations
+"仅统计本机记录；未提供 Token 明细的 ChatGPT Work 用量不计入。" = "Local records only. ChatGPT Work usage without token details is not included.";
+"仅统计本机可读取的用量记录。" = "Only readable usage records on this Mac are included.";
+"今日本机已记录 Token" = "Tokens recorded locally today";
+"本机已记录 Token" = "Locally recorded tokens";
+"正在检查本机用量记录…" = "Checking local usage records…";
+"今天暂无可读取的 Token 记录" = "No readable token records for today";
+"最近记录：" = "Latest record: ";
+" · 账户剩余额度" = " · Account allowance remaining";
+"Perch · 今日本机已记录 Token" = "Perch · Tokens recorded locally today";

@@ -62,6 +62,7 @@ struct GaugeDial: View {
   }
 }
 struct PanelGroup<Content: View>: View {
+  @Environment(\.isStatusPanel) private var isStatusPanel
   let title: String
   var trailing: String = ""
   @ViewBuilder var content: () -> Content
@@ -82,7 +83,8 @@ struct PanelGroup<Content: View>: View {
       }.buttonStyle(.plain).help(collapsed ? L("展开") + title : L("收起") + title)
       if !collapsed { content() }
     }.padding(.horizontal, 11).padding(.vertical, 8)
-      .background(ScopeTheme.ink.opacity(0.052), in: RoundedRectangle(cornerRadius: 8))
+      .background(isStatusPanel ? StatusPanelTheme.surface : ScopeTheme.ink.opacity(0.052),
+                  in: RoundedRectangle(cornerRadius: isStatusPanel ? 14 : 8))
   }
 }
 private struct Field: View {
@@ -170,13 +172,14 @@ struct DuplexChart: View {
   }
 }
 struct HardwareBody: View {
+  @Environment(\.isStatusPanel) private var isStatusPanel
   let r: Reading
   var body: some View {
     let s = r.sensors
     let cpu = temp(s)
     let gpu = s?.gpuTemp
     let fan = fanPercent(s)
-    VStack(spacing: 5) {
+    VStack(spacing: isStatusPanel ? 14 : 5) {
       HStack {
         Spacer()
         GaugeDial(
@@ -204,6 +207,7 @@ struct HardwareBody: View {
   }
 }
 private struct SensorDashboard: View {
+  @Environment(\.isStatusPanel) private var isStatusPanel
   let r: Reading
   @State private var selected = L("温度")
   private let categories = [L("温度"), L("功率"), L("电压"), L("风扇"), L("频率")]
@@ -245,17 +249,31 @@ private struct SensorDashboard: View {
   }
   var body: some View {
     VStack(alignment: .leading, spacing: 7) {
-      ViewThatFits(in: .horizontal) {
-        HStack {
-          sensorTitle.fixedSize()
-          Spacer(minLength: 8)
+      if isStatusPanel {
+        HStack(spacing: 2) {
+          ForEach(categories, id: \.self) { category in
+            Button { selected = category } label: {
+              Text(category).font(.system(size: 10, weight: .medium))
+                .lineLimit(1).minimumScaleFactor(0.85)
+                .frame(maxWidth: .infinity).padding(.vertical, 8)
+            }
+            .buttonStyle(StatusPanelButtonStyle(selected: selected == category))
+            .accessibilityAddTraits(selected == category ? .isSelected : [])
+          }
+        }.padding(3).background(StatusPanelTheme.surface, in: RoundedRectangle(cornerRadius: 12))
+      } else {
+        ViewThatFits(in: .horizontal) {
+          HStack {
+            sensorTitle.fixedSize()
+            Spacer(minLength: 8)
+            categoryPicker.pickerStyle(.segmented).fixedSize()
+          }
           categoryPicker.pickerStyle(.segmented).fixedSize()
-        }
-        categoryPicker.pickerStyle(.segmented).fixedSize()
-        HStack {
-          sensorTitle
-          Spacer(minLength: 8)
-          categoryPicker.pickerStyle(.menu).fixedSize()
+          HStack {
+            sensorTitle
+            Spacer(minLength: 8)
+            categoryPicker.pickerStyle(.menu).fixedSize()
+          }
         }
       }
       let rows = readings
@@ -292,7 +310,7 @@ struct NetworkBody: View {
           speed(L("下载"), .download, downloadColor)
         }
         DuplexChart(samples: samples)
-      }.padding(10).background(ScopeTheme.ink.opacity(0.055), in: RoundedRectangle(cornerRadius: 9))
+      }.padding(14).tile(9)
       HStack {
         Image(systemName: info.interface.lowercased().contains("wi-fi") ? "wifi" : "network")
           .foregroundStyle(ice)
@@ -310,7 +328,7 @@ struct NetworkBody: View {
         Field(name: L("本机 IP"), value: info.local)
       }
       ProcessLedger(kind: .network, compact: true)
-        .padding(9).tile(8)
+        .padding(12).tile(8)
     }
   }
   func speed(_ title: String, _ metric: Metric, _ color: Color) -> some View {
@@ -327,47 +345,63 @@ struct NetworkBody: View {
     }.frame(maxWidth: .infinity)
   }
 }
+private struct PanelContentHeight: PreferenceKey {
+  static var defaultValue: CGFloat = 360
+  static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
 struct InstrumentPanel: View {
   @ObservedObject var studio: Studio
   @ObservedObject var monitor: Monitor
   @ObservedObject var nav: PanelNavigation
   var inline = false
+  @State private var contentHeight: CGFloat = 360
+
   var body: some View {
-    VStack(spacing: 8) {
-      HStack {
-        Image(systemName: "waveform.path.ecg").foregroundStyle(ice)
-        Text(L("Perch")).font(.system(size: 12, weight: .bold))
+    VStack(spacing: 14) {
+      HStack(spacing: 8) {
+        Brand(size: 20).accessibilityHidden(true)
+        Text("Perch").font(.system(size: 15, weight: .semibold))
         Spacer()
-        HStack(spacing: 1) {
-          ForEach(InstrumentTab.allCases, id: \.self) { tab in
-            Button {
-              nav.tab = tab
-            } label: {
-              Text(L(tab.rawValue)).fixedSize().font(.system(size: 12, weight: .semibold))
-                .padding(.horizontal, 10).padding(.vertical, 5)
-                .foregroundStyle(nav.tab == tab ? ScopeTheme.canvas : ScopeTheme.ink.opacity(0.78))
-                .background(nav.tab == tab ? ScopeTheme.ink : .clear, in: Capsule())
-                .contentShape(Capsule())
-            }.buttonStyle(.plain).accessibilityAddTraits(nav.tab == tab ? .isSelected : [])
-          }
-        }.padding(2).background(ScopeTheme.raised, in: Capsule())
         if !inline {
-          Button {
-            nav.pinned.toggle()
-          } label: {
+          Button { nav.pinned.toggle() } label: {
             Image(systemName: nav.pinned ? "pin.fill" : "pin")
-          }.buttonStyle(.plain).help(nav.pinned ? L("取消保持面板") : L("保持面板打开"))
+              .font(.system(size: 13, weight: .medium)).frame(width: 32, height: 32)
+          }
+          .buttonStyle(StatusPanelButtonStyle(selected: nav.pinned))
+          .help(nav.pinned ? L("取消保持面板") : L("保持面板打开"))
+          .accessibilityLabel(nav.pinned ? L("取消保持面板") : L("保持面板打开"))
+          .accessibilityAddTraits(nav.pinned ? .isSelected : [])
         }
-      }.padding(.horizontal, 4)
+      }
+      HStack(spacing: 3) {
+        ForEach(InstrumentTab.allCases, id: \.self) { tab in
+          Button { nav.tab = tab } label: {
+            Label(L(tab.rawValue), systemImage: symbol(for: tab))
+              .font(.system(size: 12, weight: .medium))
+              .lineLimit(1).frame(maxWidth: .infinity).padding(.vertical, 9)
+          }
+          .buttonStyle(StatusPanelButtonStyle(selected: nav.tab == tab))
+          .accessibilityAddTraits(nav.tab == tab ? .isSelected : [])
+        }
+      }.padding(4).background(StatusPanelTheme.surface, in: RoundedRectangle(cornerRadius: 13))
+
       ScrollView(.vertical) {
         panelBody.frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
+          .background {
+            GeometryReader { geometry in
+              Color.clear.preference(key: PanelContentHeight.self, value: ceil(geometry.size.height))
+            }
+          }
       }
       .id(nav.tab)
-      .frame(minWidth: 0, maxWidth: .infinity)
-      .frame(height: min(535, max(180, (NSScreen.main?.visibleFrame.height ?? 800) - 165)))
+      .frame(maxWidth: .infinity)
+      .frame(height: min(contentHeight, max(150, (NSScreen.main?.visibleFrame.height ?? 800) - 235), 510))
+      .onPreferenceChange(PanelContentHeight.self) { contentHeight = max(1, $0) }
       .transaction { $0.animation = nil }
-      Divider().overlay(ScopeTheme.ink.opacity(0.15))
-      HStack(spacing: 8) {
+
+      Rectangle().fill(StatusPanelTheme.border).frame(height: 1)
+      HStack(spacing: 6) {
         foot("viewfinder", L("区域截图")) { studio.take(.region) }
         foot("square.on.square", L("剪贴板贴图")) { studio.pinClipboard() }
         foot("photo.stack", L("截图库")) {
@@ -383,19 +417,28 @@ struct InstrumentPanel: View {
           studio.page = .settings
           studio.open()
         }
-      }.padding(.horizontal, 2)
-    }.padding(10).frame(width: 364).foregroundStyle(ScopeTheme.ink)
-      .background(
-        ScopeTheme.panel
-      )
-      .background(.ultraThinMaterial).clipShape(RoundedRectangle(cornerRadius: 13))
-      .overlay(RoundedRectangle(cornerRadius: 13).strokeBorder(ScopeTheme.ink.opacity(0.13)))
+      }
+    }
+    .padding(16).frame(width: 400)
+    .foregroundStyle(ScopeTheme.ink)
+    .background(StatusPanelTheme.background)
+    // NSPopover supplies the outer clipping and border, including its arrow.
+    .environment(\.isStatusPanel, true)
   }
+
+  private func symbol(for tab: InstrumentTab) -> String {
+    switch tab {
+    case .hardware: return "cpu"
+    case .network: return "network"
+    case .usage: return "chart.bar"
+    }
+  }
+
   @ViewBuilder private var panelBody: some View {
     if nav.tab == .hardware {
-      VStack(spacing: 6) {
+      VStack(spacing: 12) {
         HardwareBody(r: monitor.current)
-        ProcessLedger(kind: .resources, compact: true).padding(9).tile(8)
+        ProcessLedger(kind: .resources, compact: true).padding(12).tile()
       }
     } else if nav.tab == .usage {
       UsageSummary(store: studio.usage) {
@@ -407,19 +450,12 @@ struct InstrumentPanel: View {
     }
   }
   private func foot(_ symbol: String, _ name: String, _ action: @escaping () -> Void) -> some View {
-    PanelIcon(symbol: symbol, name: name, action: action)
-  }
-}
-private struct PanelIcon: View {
-  let symbol: String, name: String, action: () -> Void
-  @State private var hover = false
-  var body: some View {
     Button(action: action) {
-      Image(systemName: symbol).font(.system(size: 12, weight: .medium)).frame(
-        width: 28, height: 23
-      ).background(
-        ScopeTheme.ink.opacity(hover ? 0.16 : 0.055), in: RoundedRectangle(cornerRadius: 6))
-    }.buttonStyle(.plain).onHover { hover = $0 }.help(name).accessibilityLabel(name)
+      Image(systemName: symbol).font(.system(size: 14, weight: .medium))
+        .frame(width: 36, height: 34)
+    }
+    .buttonStyle(StatusPanelButtonStyle())
+    .help(name).accessibilityLabel(name)
   }
 }
 enum StatusInk {

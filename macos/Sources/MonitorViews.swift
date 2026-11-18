@@ -198,6 +198,7 @@ struct Preferences: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 17) {
       StartupPreferences()
+      AgentAlertSettings()
       row(L("外观")) {
         Picker(L("外观"), selection: $appearance) {
           Text(L("跟随系统")).tag("system")

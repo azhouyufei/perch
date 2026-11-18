@@ -147,6 +147,7 @@ sealed partial class Workspace : Form
     FlowLayoutPanel sidebar, body;
     Label heading;
     Panel content;
+    readonly AgentAlerts agentAlerts;
     public Workspace()
     {
         UI.Theme(this);
@@ -155,6 +156,7 @@ sealed partial class Workspace : Form
         Size = new Size(1030, 764);
         AutoScaleMode = AutoScaleMode.Dpi;
         clips = new Clips();
+        agentAlerts = new AgentAlerts(this);
         BuildShell();
         BuildTray();
         RegisterKeys();
@@ -178,6 +180,7 @@ sealed partial class Workspace : Form
         };
         Shown += (s, e) =>
         {
+            agentAlerts.Start();
             ShowNotes();
             Navigate(0);
             Tick();
@@ -945,6 +948,7 @@ sealed partial class Workspace : Form
         {
             released = true;
             exiting = true;
+            agentAlerts.Dispose();
             clock.Dispose();
             hover.Dispose();
             retry.Dispose();

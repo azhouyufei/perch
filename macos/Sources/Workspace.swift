@@ -64,7 +64,7 @@ struct Workspace: View {
           .font(.callout).padding(10).background(ScopeTheme.sidebar)
         }
       }.frame(maxWidth: .infinity, maxHeight: .infinity)
-    }.environment(\.processTablesVisible, studio.workspaceVisible).background(ScopeTheme.canvas).tint(ScopeTheme.accent)
+    }.environment(\.processTablesVisible, studio.workspaceVisible).background(ScopeTheme.background).tint(ScopeTheme.accent)
       .sheet(
         item: $studio.inspected,
         onDismiss: {
@@ -138,7 +138,7 @@ struct Workspace: View {
             }.frame(maxHeight: 90)
           }
         }.padding(22).frame(minWidth: 620, minHeight: 420).frame(idealWidth: 780, idealHeight: 540)
-          .background(ScopeTheme.canvas).tint(ScopeTheme.accent)
+          .background(ScopeTheme.background).tint(ScopeTheme.accent)
           .onDisappear { textResult = nil }
           .alert(
             L("删除这张截图？"),

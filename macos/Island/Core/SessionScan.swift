@@ -1,0 +1,746 @@
+import Foundation
+
+/// The Claude app keeps its own list of Code sessions. This maps a transcript id to the app's id, title and focus.
+public final class DesktopSessions: @unchecked Sendable {
+    public struct Entry: Sendable {
+        public let id: String
+        public let title: String?
+        public let cwd: String?
+        public let archived: Bool
+        /// The last time the session was in front of you in the Claude app.
+        public let focusedAt: Date?
+        /// The pull requests the app lists for it (its `prs`).
+        public var prs: [PullRequest] = []
+    }
+    public static let shared = DesktopSessions(root: FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/Claude/claude-code-sessions"))
+    let root: URL
+    /// Parsed files by path, read again only when they change. A busy session triggers a scan every half second.
+    private var cache: [String: (mtime: Date, cli: String, entry: Entry)] = [:]
+    private let lock = NSLock()
+
+    public init(root: URL) { self.root = root }
+
+    /// Keys are the transcript ids (the app calls them cliSessionId).
+    public func index() -> [String: Entry] {
+        let fm = FileManager.default
+        lock.lock(); defer { lock.unlock() }
+        var fresh: [String: (mtime: Date, cli: String, entry: Entry)] = [:]
+        for account in (try? fm.contentsOfDirectory(atPath: root.path)) ?? [] {
+            let accountDir = root.appendingPathComponent(account)
+            for org in (try? fm.contentsOfDirectory(atPath: accountDir.path)) ?? [] {
+                let dir = accountDir.appendingPathComponent(org)
+                for file in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] where file.hasPrefix("local_") && file.hasSuffix(".json") {
+                    let url = dir.appendingPathComponent(file)
+                    guard let mtime = SessionScanner.mtime(url) else { continue }
+                    if let hit = cache[url.path], hit.mtime == mtime { fresh[url.path] = hit; continue }
+                    guard let data = try? Data(contentsOf: url),
+                          let o = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                          let cli = o["cliSessionId"] as? String, let id = o["sessionId"] as? String else { continue }
+                    let focused = (o["lastFocusedAt"] as? Double).map { Date(timeIntervalSince1970: $0 / 1000) }
+                    // A side chat (`btw`) copies its session's transcript and is answered in that session's side panel,
+                    // so it gets no row of its own: it would read just like the session, and a reply would land in it.
+                    let sideChat = (o["spawnedFrom"] as? [String: Any])?["btw"] as? Bool ?? false
+                    fresh[url.path] = (mtime, cli, Entry(id: id, title: o["title"] as? String, cwd: o["cwd"] as? String,
+                                                         archived: (o["isArchived"] as? Bool ?? false) || sideChat, focusedAt: focused, prs: PullRequests.fromApp(o["prs"], sessionBranches: ["branch", "sourceBranch", "worktreeName"].compactMap { o[$0] as? String })))
+                }
+            }
+        }
+        cache = fresh
+        return Dictionary(fresh.values.map { ($0.cli, $0.entry) }, uniquingKeysWith: { a, _ in a })
+    }
+}
+
+/// Finds the sessions worth a row: every session the Claude app lists and every Codex thread you started, newest first.
+public final class SessionScanner: @unchecked Sendable {
+    public typealias Found = (project: Project, digest: SessionDigest, git: GitInfo?, last: Date)
+    public var maxAgeDays = 14
+    /// Whether a folder is somewhere you would go back to. Scratchpads and temporary folders are not.
+    public var usable: (String) -> Bool = SessionScanner.isUsable
+    public var lookUpGit: (String) -> GitInfo? = SessionScanner.git(at:)
+    public var lookUpBranch: (String) -> String? = SessionScanner.branch(at:)
+    /// For a git worktree, the name of the project it belongs to. Nil for anything else.
+    public var lookUpRepo: (String) -> String? = SessionScanner.repo(at:)
+    let home: URL
+    let desktop: DesktopSessions
+    let conductor: ConductorSessions
+    let claudeCache: ClaudeCache
+    let claudeWords: ClaudeWords
+    let dotsStore: DotsStore
+    let grokStore: GrokBotStore
+
+    /// The Claude app's tasks and chats are read from `home` unless given, so a test's home folder holds them too.
+    public init(home: URL = FileManager.default.homeDirectoryForCurrentUser, desktop: DesktopSessions = .shared, conductor: ConductorSessions = .shared,
+                claudeCache: ClaudeCache? = nil) {
+        self.home = home; self.desktop = desktop; self.conductor = conductor
+        let idb = home.appendingPathComponent("Library/Application Support/Claude/IndexedDB")
+        self.claudeCache = claudeCache ?? ClaudeCache(root: idb.appendingPathComponent("https_claude.ai_0.indexeddb.blob"))
+        self.claudeWords = ClaudeWords(idb: idb)
+        self.dotsStore = DotsStore(url: home.appendingPathComponent(".codex/.codex-global-state.json"))
+        self.grokStore = GrokBotStore(root: home.appendingPathComponent("Library/Application Support/Grok Bot/sand-client-persistence"))
+    }
+
+    /// Reading a session tail is the slow part, so a file is only read again when it changed.
+    private let codexStore = CodexThreadStore()
+    private var codexEvents: [String: HookEvent] = [:]
+
+    /// New threads can send hooks before their index or rollout has been written.
+    public func noteCodexEvent(_ event: HookEvent) {
+        guard event.agent == "codex", event.helper == nil else { return }
+        lock.lock(); defer { lock.unlock() }
+        if let previous = codexEvents[event.sessionId], previous.at > event.at { return }
+        var updated = event
+        updated.cwd = event.cwd ?? codexEvents[event.sessionId]?.cwd
+        updated.transcriptPath = event.transcriptPath ?? codexEvents[event.sessionId]?.transcriptPath
+        updated.turnId = event.turnId ?? codexEvents[event.sessionId]?.turnId
+        codexEvents[event.sessionId] = updated
+        codexEvents = codexEvents.filter { event.at.timeIntervalSince($0.value.at) < 86400 }
+    }
+    private var digestCache: [String: (mtime: Date, digest: SessionDigest)] = [:]
+    private var prCache: [String: (mtime: Date, urls: [String])] = [:]
+    private var gitCache: [String: (until: Date, info: GitInfo?, branch: String?)] = [:]
+    /// Whether a folder is a worktree, and of which project, does not change.
+    private var repoCache: [String: String?] = [:]
+    private func cachedRepo(_ cwd: String) -> String? {
+        lock.lock(); let hit = repoCache[cwd]; lock.unlock()
+        if let hit { return hit }
+        let r = lookUpRepo(cwd)
+        lock.lock(); repoCache[cwd] = .some(r); lock.unlock()
+        return r
+    }
+    /// The first line of a Codex file never changes once written.
+    private var headCache: [String: SessionDigest] = [:]
+    private var threadNames: (mtime: Date, names: [String: String])?
+    private let lock = NSLock()
+
+    public static func isUsable(_ cwd: String) -> Bool {
+        !cwd.contains("/scratchpad") && !cwd.hasPrefix("/private/tmp") && !cwd.hasPrefix("/tmp") && !cwd.hasPrefix("/var/")
+            && FileManager.default.fileExists(atPath: cwd)
+    }
+
+    static func mtime(_ url: URL) -> Date? { try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate }
+    static func created(_ url: URL) -> Date? { try? url.resourceValues(forKeys: [.creationDateKey]).creationDate }
+
+    private func cachedDigest(_ url: URL, mtime: Date, parse: ([String]) -> SessionDigest) -> SessionDigest? {
+        lock.lock(); let hit = digestCache[url.path]; lock.unlock()
+        if let hit, hit.mtime == mtime { return hit.digest }
+        guard let d = Self.digest(of: url, parse: parse) else { return nil }
+        lock.lock(); digestCache[url.path] = (mtime, d); lock.unlock()
+        return d
+    }
+
+    private func cachedHead(_ url: URL, lines: Int = 1, parse: ([String]) -> SessionDigest = CodexTranscript.digest) -> SessionDigest? {
+        lock.lock(); let hit = headCache[url.path]; lock.unlock()
+        if let hit { return hit }
+        guard let d = Self.head(of: url, lines: lines, parse: parse), d.sessionId != nil else { return nil }
+        lock.lock(); headCache[url.path] = d; lock.unlock()
+        return d
+    }
+
+    /// Git state changes slowly next to a conversation, so it is looked up at most every 30 seconds per folder, and a
+    /// checkout that takes seconds to read (or is stopped, `run`) every ten minutes, so it does not slow every scan.
+    private func cachedGit(_ cwd: String, withBranch: Bool = false) -> (info: GitInfo?, branch: String?) {
+        lock.lock(); let hit = gitCache[cwd]; lock.unlock()
+        if let hit, Date() < hit.until, !withBranch || hit.branch != nil { return (hit.info, hit.branch) }
+        let start = Date()
+        let info = lookUpGit(cwd), branch = withBranch ? lookUpBranch(cwd) : hit?.branch
+        let slow = Date().timeIntervalSince(start) > 2
+        lock.lock(); gitCache[cwd] = (Date().addingTimeInterval(slow ? 600 : 30), info, branch); lock.unlock()
+        return (info, branch)
+    }
+
+    // MARK: Claude Code (~/.claude/projects/*/<id>.jsonl)
+    /// The Claude app's own list decides: every session it shows, archived ones left out. A folder full of terminal
+    /// or headless runs can never push an app session out of reach.
+    public func claude(limit: Int, now: Date = Date()) -> [Found] {
+        let fm = FileManager.default
+        let root = IslandPaths.directory("CLAUDE_CONFIG_DIR", fallback: ".claude", home: home).appendingPathComponent("projects")
+        let cutoff = now.addingTimeInterval(-Double(maxAgeDays) * 86_400)
+        // Every transcript by id. Claude Code names a session's folder after its path, but long or unusual paths differ.
+        var all: [String: URL] = [:]
+        for dir in (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? [] {
+            for f in (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? [] where f.pathExtension == "jsonl" {
+                all[f.deletingPathExtension().lastPathComponent] = f
+            }
+        }
+        func transcript(_ cli: String, cwd: String?) -> URL? {
+            if let cwd {
+                let dir = String(cwd.map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : "-" })
+                let url = root.appendingPathComponent(dir).appendingPathComponent(cli + ".jsonl")
+                if fm.fileExists(atPath: url.path) { return url }
+            }
+            return all[cli]
+        }
+        let sessions = desktop.index()
+            .filter { !$0.value.archived }
+            .compactMap { cli, entry -> (entry: DesktopSessions.Entry, url: URL, mtime: Date)? in
+                guard let url = transcript(cli, cwd: entry.cwd), let m = Self.mtime(url), m > cutoff else { return nil }
+                return (entry, url, m)
+            }
+            .sorted { $0.mtime > $1.mtime }
+
+        var out: [Found] = []
+        // Sessions started in a terminal: the transcripts the app does not list, started from the command line.
+        // Headless runs (`claude -p`, SDKs) and sessions the app has since deleted are not.
+        let hosted = conductor.index()
+        let listed = Set(desktop.index().keys).union(hosted.keys)
+        let terminal = all.compactMap { cli, url -> (url: URL, mtime: Date)? in
+            guard !listed.contains(cli), let m = Self.mtime(url), m > cutoff else { return nil }
+            return (url, m)
+        }.sorted { $0.mtime > $1.mtime }
+        var fromTerminal = 0, chats = 0
+        for t in terminal {
+            guard fromTerminal < limit else { break }
+            guard var digest = cachedDigest(t.url, mtime: t.mtime, parse: TranscriptParser.digest), digest.lastTimestamp != nil,
+                  digest.entrypoint == nil || digest.entrypoint == "cli", let cwd = digest.cwd, usable(cwd) else { continue }
+            let chat = Recap.isTrivial(digest)   // kept, marked: the app lists it only while its agent runs
+            digest.repoName = cachedRepo(cwd)
+            let git = cachedGit(cwd).info
+            Self.heardFrom(helpersOf: t.url, &digest)
+            if var p = Recap.project(digest: digest, git: git, now: now, quietFor: now.timeIntervalSince(t.mtime)), let last = digest.lastTimestamp {
+                p.terminal = true; p.startedAt = Self.created(t.url); p.smallTalk = chat
+                p.prs = PullRequestScan.requests(PullRequestScan.created(in: t.url))
+                out.append((p, digest, git, last)); if chat { chats += 1 } else { fromTerminal += 1 }
+            }
+        }
+        for s in sessions {
+            guard out.count < limit + fromTerminal + chats else { break }
+            guard var digest = cachedDigest(s.url, mtime: s.mtime, parse: TranscriptParser.digest), digest.lastTimestamp != nil,
+                  // The app's folder for the session wins: the transcript's follows every `cd` the agent makes.
+                  !Recap.isTrivial(digest), let cwd = s.entry.cwd ?? digest.cwd, usable(cwd) else { continue }
+            digest.cwd = cwd
+            if let t = s.entry.title, !t.isEmpty { digest.title = t }      // the Claude app's own title wins
+            digest.repoName = cachedRepo(cwd)
+            let git = cachedGit(cwd).info
+            Self.heardFrom(helpersOf: s.url, &digest)
+            if var p = Recap.project(digest: digest, git: git, now: now, desktopSessionId: s.entry.id, quietFor: now.timeIntervalSince(s.mtime)), let last = digest.lastTimestamp {
+                p.focusedAt = s.entry.focusedAt
+                // The app lists the pull requests a session has; one it does not list but the session opened is found in its log.
+                p.prs = s.entry.prs + PullRequestScan.requests(PullRequestScan.created(in: s.url)).filter { f in !s.entry.prs.contains { $0.url == f.url } }
+                out.append((p, digest, git, last))
+            }
+        }
+        // Conductor's own list: workspaces it made, each a worktree of a project. They open in Conductor.
+        var fromConductor = 0
+        for (cli, entry) in hosted where entry.agent == "claude" && !entry.archived {
+            guard fromConductor < limit, let url = transcript(cli, cwd: entry.cwd), let mtime = Self.mtime(url), mtime > cutoff,
+                  var digest = cachedDigest(url, mtime: mtime, parse: TranscriptParser.digest), digest.lastTimestamp != nil,
+                  !Recap.isTrivial(digest), usable(entry.cwd) else { continue }
+            digest.cwd = entry.cwd
+            if let t = entry.title { digest.title = t }
+            digest.repoName = entry.repo ?? cachedRepo(entry.cwd)
+            digest.branch = entry.branch ?? digest.branch
+            let git = cachedGit(entry.cwd).info
+            Self.heardFrom(helpersOf: url, &digest)
+            if var p = Recap.project(digest: digest, git: git, now: now, quietFor: now.timeIntervalSince(mtime), conductor: entry.workspaceId), let last = digest.lastTimestamp {
+                p.startedAt = Self.created(url); p.prs = PullRequestScan.requests(PullRequestScan.created(in: url))
+                out.append((p, digest, git, last)); fromConductor += 1
+            }
+        }
+        return out
+    }
+
+    // MARK: Claude tasks and chats (the Claude app's cached lists)
+    /// Tasks (what was Cowork), from the Claude app's own list, archived ones left out. Each is named after the first folder
+    /// you gave it; one without a folder goes by its title alone.
+    public func tasks(limit: Int, now: Date = Date()) -> [Found] {
+        let cutoff = now.addingTimeInterval(-Double(maxAgeDays) * 86_400)
+        let words = claudeWords.read(chats: false)
+        return claudeCache.read().tasks.filter { !$0.archived && $0.lastActivity > cutoff }.prefix(limit).map { t in
+            var d = words[t.id] ?? SessionDigest()
+            d.sessionId = t.id; d.title = t.title; d.lastTimestamp = t.lastActivity
+            return (Recap.task(t, words: words[t.id], now: now), d, nil, t.lastActivity)
+        }
+    }
+
+    /// The recent chats the Claude app last fetched: a title and a time each. With `words`, what was said too, where this Mac
+    /// has it; without (chats switched off, only counted for onboarding and Settings), nothing of any chat is read but that.
+    public func chats(limit: Int, now: Date = Date(), words withWords: Bool = true) -> [Found] {
+        let cutoff = now.addingTimeInterval(-Double(maxAgeDays) * 86_400)
+        let words = withWords ? claudeWords.read() : [:]
+        return claudeCache.read().chats.filter { $0.updated > cutoff }.prefix(limit).map { c in
+            var d = words[c.id] ?? SessionDigest()
+            d.sessionId = c.id; d.title = c.title; d.lastTimestamp = c.updated
+            return (Recap.chat(c, words: words[c.id], now: now), d, nil, c.updated)
+        }
+    }
+
+    /// Grok Bot's bots and OpenAI's Dots, from their apps' saved state (`PersonalAgents.swift`). A bot's chat copy is parsed
+    /// again only when its file changed. `sidebar` is what Grok Bot's window lists, which alone says a bot is at work.
+    public func grokBots(limit: Int, now: Date = Date(), sidebar: [String] = []) -> [Found] {
+        let cutoff = now.addingTimeInterval(-Double(maxAgeDays) * 86_400)
+        let store = grokStore, working = GrokBotStore.working(sidebar), bots = store.bots()
+        // The sidebar names a bot only by its name: two bots sharing one cannot be told apart, so neither counts as at work.
+        let shared = Set(Dictionary(grouping: bots, by: \.name).filter { $0.value.count > 1 }.keys)
+        return bots.filter { $0.lastActivity > cutoff }.prefix(limit).map { b in
+            var b = b; b.working = working.contains(b.name) && !shared.contains(b.name)
+            let words = store.words(bot: b.id)
+            var d = words ?? SessionDigest()
+            d.sessionId = b.id; d.title = b.name; d.lastTimestamp = b.lastActivity
+            return (Recap.grokBot(b, words: words, now: now), d, nil, b.lastActivity)
+        }
+    }
+
+    public func dots(limit: Int, now: Date = Date()) -> [Found] {
+        let cutoff = now.addingTimeInterval(-Double(maxAgeDays) * 86_400)
+        return dotsStore.dots().filter { $0.lastActivity > cutoff }.prefix(limit).map { dot in
+            var d = SessionDigest()
+            d.sessionId = dot.id; d.title = dot.name; d.lastTimestamp = dot.lastActivity; d.lastAssistantText = dot.preview
+            return (Recap.dot(dot, now: now), d, nil, dot.lastActivity)
+        }
+    }
+
+    /// A helper left in the background writes its own transcript (`<id>/subagents/agent-<agentId>.jsonl`) while the session's
+    /// waits: its last change there is the helper's last sign of life.
+    static func heardFrom(helpersOf url: URL, _ d: inout SessionDigest) {
+        let dir = url.deletingPathExtension().appendingPathComponent("subagents")
+        for i in d.background.indices where d.background[i].kind == .helper {
+            guard let m = mtime(dir.appendingPathComponent("agent-\(d.background[i].taskId).jsonl")) else { continue }
+            d.background[i].at = max(d.background[i].at ?? m, m)
+        }
+    }
+
+    // MARK: Codex (~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl)
+    public func codex(limit: Int, now: Date = Date()) -> [Found] {
+        let fm = FileManager.default
+        let root = IslandPaths.directory("CODEX_HOME", fallback: ".codex", home: home)
+        let cutoff = now.addingTimeInterval(-Double(maxAgeDays) * 86_400)
+        func entries(_ url: URL) -> [URL] { (try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)) ?? [] }
+        // A thread resumed today still lives in the folder of the day it began, so every file's age is checked.
+        var candidates: [(url: URL, mtime: Date)] = []
+        for year in entries(root.appendingPathComponent("sessions")) {
+            for month in entries(year) {
+                for day in entries(month) {
+                    for file in entries(day) where file.pathExtension == "jsonl" {
+                        if let m = Self.mtime(file), m > cutoff { candidates.append((file, m)) }
+                    }
+                }
+            }
+        }
+        candidates.sort { $0.mtime > $1.mtime }
+        let names = codexThreadNames(root.appendingPathComponent("session_index.jsonl"))
+        let hosted = conductor.index()
+
+        guard limit > 0 else { return [] }
+        let index = codexStore.index(in: root)
+        var rows: [String: Found] = [:]
+        func add(_ value: SessionDigest, indexed: CodexThreadStore.Thread?, file: URL?, git: GitInfo?, smallTalk: Bool) {
+            var digest = value
+            guard let id = digest.sessionId, let last = digest.lastTimestamp else { return }
+            let workspace = hosted[id]
+            guard workspace?.archived != true else { return }
+            digest.title = workspace?.title ?? indexed?.name ?? names[id] ?? indexed?.title ?? digest.title
+            digest.repoName = workspace?.repo ?? indexed?.project ?? digest.repoName
+            digest.branch = digest.branch ?? indexed?.branch
+            let terminal = digest.entrypoint == "cli"
+            let activity = last
+            guard var project = Recap.project(digest: digest, git: git, now: now, agent: .codex,
+                                              quietFor: now.timeIntervalSince(last), conductor: workspace?.workspaceId,
+                                              inApp: !terminal) else { return }
+            project.terminal = terminal
+            project.startedAt = indexed?.created ?? file.flatMap(Self.created)
+            project.smallTalk = smallTalk
+            project.lastActive = activity
+            if let file { project.prs = PullRequestScan.requests(PullRequestScan.created(in: file)) }
+            rows[id] = (project, digest, git, activity)
+        }
+        for item in candidates {
+            guard let head = cachedHead(item.url), !head.headless, let id = head.sessionId,
+                  !index.hidden.contains(id), let cwd = head.cwd else { continue }
+            let entry = index.visible[id]
+            guard entry != nil || head.entrypoint == "vscode" || usable(cwd),
+                  var digest = cachedDigest(item.url, mtime: item.mtime, parse: CodexTranscript.digest),
+                  let fileDate = digest.lastTimestamp else { continue }
+            if let latest = entry?.digest, let date = latest.lastTimestamp, date.timeIntervalSince(fileDate) > 1,
+               latest.lastUserFull != nil || latest.lastAssistantFull != nil { digest = latest }
+            digest.cwd = cwd; digest.sessionId = id; digest.entrypoint = head.entrypoint ?? entry?.source
+            let trivial = entry == nil && head.entrypoint != "vscode" && Recap.isTrivial(digest)
+            guard !trivial || head.entrypoint == "cli" || digest.turnOpen else { continue }
+            digest.repoName = cachedRepo(cwd)
+            let git = cachedGit(cwd, withBranch: true)
+            digest.branch = git.branch
+            add(digest, indexed: entry, file: item.url, git: git.info, smallTalk: trivial)
+        }
+        for entry in index.visible.values where rows[entry.id] == nil {
+            var digest = entry.digest
+            digest.sessionId = entry.id; digest.cwd = entry.cwd; digest.entrypoint = entry.source
+            digest.lastTimestamp = digest.lastTimestamp ?? entry.updated
+            add(digest, indexed: entry, file: nil, git: nil, smallTalk: false)
+        }
+        lock.lock()
+        let events = Array(codexEvents.values)
+        lock.unlock()
+        for event in events where rows[event.sessionId] == nil && !index.hidden.contains(event.sessionId)
+            && now.timeIntervalSince(event.at) < 86400 {
+            let head = event.transcriptPath.flatMap { Self.head(of: URL(fileURLWithPath: $0)) }
+            guard head?.headless != true, head?.sessionId == nil || head?.sessionId == event.sessionId,
+                  let cwd = event.cwd ?? head?.cwd else { continue }
+            var digest = head ?? SessionDigest()
+            digest.sessionId = event.sessionId
+            digest.cwd = cwd
+            digest.lastTimestamp = event.at
+            digest.turnId = event.turnId ?? digest.turnId
+            digest.entrypoint = head?.entrypoint ?? "vscode"
+            digest.lastRole = "user"
+            switch event.kind {
+            case .started, .toolRan, .asks: digest.turnOpen = true
+            case .finished(let message):
+                digest.turnOpen = false
+                digest.lastRole = "assistant"
+                digest.lastAssistantFull = message
+                digest.lastAssistantText = message
+            case .failed: digest.failed = "Codex stopped on an error"
+            case .interrupted: digest.interrupted = true
+            }
+            add(digest, indexed: nil, file: nil, git: nil, smallTalk: false)
+        }
+        return Array(rows.values.sorted {
+            $0.last == $1.last ? $0.project.id < $1.project.id : $0.last > $1.last
+        }.prefix(limit))
+    }
+
+    /// Work mode has no rollout or cwd and must not go through the CLI folder filter.
+    public func chatGPTWork(limit: Int, now: Date = Date()) -> [Found] {
+        guard limit > 0 else { return [] }
+        let root = IslandPaths.directory("CODEX_HOME", fallback: ".codex", home: home)
+        let cutoff = now.addingTimeInterval(-Double(maxAgeDays) * 86400)
+        return ChatGPTWorkStore.chats(in: root, now: now).filter { $0.updated > cutoff || $0.active }.prefix(limit).map { chat in
+            let status = chat.active ? "ChatGPT Work is running" : "Open ChatGPT to check progress"
+            var project = Project(id: "chatgpt:" + chat.id, name: chat.title, branch: nil,
+                away: RelativeTime.away(from: chat.updated, to: now), at: RelativeTime.clock(chat.updated, now: now),
+                headline: chat.title,
+                context: "This Work conversation is hosted by ChatGPT. Detailed progress and completion are not available in the local Codex transcript.",
+                next: "", topic: "ChatGPT Work", app: Agent.codex.id,
+                agents: [AgentStatus(kind: chat.active ? .running : .idle, text: status, app: Agent.codex.id)],
+                steps: [RestoreStep(icon: "win", text: "Opened ChatGPT conversation")], sessionId: chat.id)
+            project.chatGPTConversationId = chat.id
+            project.lastActive = chat.updated; project.startedAt = chat.created; project.appSays = true
+            var digest = SessionDigest()
+            digest.sessionId = chat.id; digest.title = chat.title; digest.lastTimestamp = chat.updated
+            return (project, digest, nil, chat.updated)
+        }
+    }
+
+    // MARK: OpenCode (~/.local/share/opencode/opencode.db)
+    /// Every session OpenCode lists (its subagents' and archived ones left out), terminal and desktop app alike.
+    public func opencode(limit: Int, now: Date = Date()) -> [Found] {
+        guard let store = OpenCodeStore(url: home.appendingPathComponent(".local/share/opencode/opencode.db")) else { return [] }
+        let cutoff = now.addingTimeInterval(-Double(maxAgeDays) * 86_400)
+        var out: [Found] = [], real = 0
+        for s in store.sessions(after: cutoff, limit: limit * 3) {
+            guard real < limit else { break }
+            guard usable(s.directory) else { continue }
+            // Read again only when the session changed.
+            let key = "opencode:" + s.id
+            lock.lock(); let hit = digestCache[key]; lock.unlock()
+            var digest: SessionDigest
+            if let hit, hit.mtime == s.updated { digest = hit.digest }
+            else { digest = OpenCodeTranscript.digest(store.messages(session: s.id)); lock.lock(); digestCache[key] = (s.updated, digest); lock.unlock() }
+            guard digest.lastTimestamp != nil else { continue }
+            let chat = Recap.isTrivial(digest)   // kept, marked: the app lists it only while it runs in a terminal
+            digest.sessionId = s.id; digest.cwd = s.directory
+            if !OpenCodeTranscript.isPlaceholder(s.title) { digest.title = s.title }
+            digest.repoName = cachedRepo(s.directory)
+            let cg = cachedGit(s.directory, withBranch: true)
+            digest.branch = cg.branch
+            if var p = Recap.project(digest: digest, git: cg.info, now: now, agent: .opencode, quietFor: now.timeIntervalSince(s.updated)), let last = digest.lastTimestamp {
+                p.terminal = true; p.startedAt = s.created; p.smallTalk = chat
+                p.prs = PullRequestScan.requests(openCodePullRequests(store, session: s))
+                out.append((p, digest, cg.info, last)); if !chat { real += 1 }
+            }
+        }
+        return out
+    }
+
+    /// The pull requests an OpenCode session opened, read again only when the session changed.
+    private func openCodePullRequests(_ store: OpenCodeStore, session s: OpenCodeStore.Session) -> [String] {
+        let key = "opencode-pr:" + s.id
+        lock.lock(); let hit = prCache[key]; lock.unlock()
+        if let hit, hit.mtime == s.updated { return hit.urls }
+        var reader = PullRequestScan.Reader()
+        for record in store.pullRequestRecords(session: s.id) { reader.feed(record) }
+        lock.lock(); prCache[key] = (s.updated, reader.found); lock.unlock()
+        return reader.found
+    }
+
+    // MARK: pi (~/.pi/agent/sessions/--<folder>--/<time>_<id>.jsonl)
+    public func pi(limit: Int, now: Date = Date()) -> [Found] { piLike(.pi, root: home.appendingPathComponent(".pi/agent/sessions"), limit: limit, now: now) }
+
+    // MARK: Oh My Pi (~/.omp/agent/sessions/<folder>/<time>_<id>.jsonl)
+    /// pi's files, with a padded title line before the header; its subagents' files sit one folder deeper and are left out.
+    public func omp(limit: Int, now: Date = Date()) -> [Found] { piLike(.omp, root: home.appendingPathComponent(".omp/agent/sessions"), limit: limit, now: now) }
+
+    private func piLike(_ agent: Agent, root: URL, limit: Int, now: Date) -> [Found] {
+        let fm = FileManager.default
+        let cutoff = now.addingTimeInterval(-Double(maxAgeDays) * 86_400)
+        var candidates: [(url: URL, mtime: Date)] = []
+        for dir in (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? [] {
+            for f in (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? [] where f.pathExtension == "jsonl" {
+                if let m = Self.mtime(f), m > cutoff { candidates.append((f, m)) }
+            }
+        }
+        candidates.sort { $0.mtime > $1.mtime }
+        var out: [Found] = [], real = 0
+        for item in candidates {
+            guard real < limit else { break }
+            guard let head = cachedHead(item.url, lines: agent == .omp ? 2 : 1, parse: PiTranscript.digest), let cwd = head.cwd, usable(cwd),
+                  var digest = cachedDigest(item.url, mtime: item.mtime, parse: PiTranscript.digest) else { continue }
+            digest.cwd = cwd; digest.sessionId = head.sessionId
+            guard digest.lastTimestamp != nil else { continue }
+            let chat = Recap.isTrivial(digest)   // kept, marked: the app lists it only while it runs
+            // Oh My Pi rewrites its title line in place: read it fresh. Unnamed, it goes by your first prompt, as pi's own list does.
+            if agent == .omp, let t = Self.head(of: item.url, lines: 1, window: 4096, parse: PiTranscript.digest)?.title { digest.title = t }
+            if digest.title == nil { digest.title = cachedFirstPrompt(item.url) }
+            digest.repoName = cachedRepo(cwd)
+            let cg = cachedGit(cwd, withBranch: true)
+            digest.branch = cg.branch
+            if var p = Recap.project(digest: digest, git: cg.info, now: now, agent: agent, quietFor: now.timeIntervalSince(item.mtime)), let last = digest.lastTimestamp {
+                p.terminal = true; p.startedAt = head.startedAt ?? Self.created(item.url); p.smallTalk = chat
+                p.prs = PullRequestScan.requests(PullRequestScan.created(in: item.url))
+                out.append((p, digest, cg.info, last)); if !chat { real += 1 }
+            }
+        }
+        return out
+    }
+
+    // MARK: Muse (~/.local/share/muse/sessions/YYYY/MM/DD/<id>/session.jsonl; titles from its index)
+    /// Muse Code's sessions in your terminal. Headless runs (`muse exec`) and subagents (their own logs, under `subagent/`)
+    /// get no row.
+    public func muse(limit: Int, now: Date = Date()) -> [Found] {
+        let fm = FileManager.default
+        let data = home.appendingPathComponent(".local/share/muse")
+        let root = data.appendingPathComponent("sessions")
+        let cutoff = now.addingTimeInterval(-Double(maxAgeDays) * 86_400)
+        let cal = Calendar.current
+        var candidates: [(url: URL, mtime: Date, id: String)] = []
+        // Sharded by local date: only the days inside the window are listed.
+        for back in 0...maxAgeDays {
+            guard let day = cal.date(byAdding: .day, value: -back, to: now) else { continue }
+            let c = cal.dateComponents([.year, .month, .day], from: day)
+            let dir = root.appendingPathComponent(String(format: "%04d/%02d/%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0))
+            for s in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] {
+                let f = dir.appendingPathComponent(s).appendingPathComponent("session.jsonl")
+                if let m = Self.mtime(f), m > cutoff { candidates.append((f, m, s)) }
+            }
+        }
+        guard !candidates.isEmpty else { return [] }
+        candidates.sort { $0.mtime > $1.mtime }
+        let titles = MuseIndex(url: data.appendingPathComponent("session-index.db")).titles()
+        var out: [Found] = [], real = 0
+        for item in candidates {
+            guard real < limit else { break }
+            guard let head = cachedMuseHead(item.url), head.interactive, let cwd = head.cwd, usable(cwd),
+                  var digest = cachedDigest(item.url, mtime: item.mtime, parse: MuseTranscript.digest) else { continue }
+            digest.cwd = cwd; digest.sessionId = item.id
+            guard digest.lastTimestamp != nil else { continue }
+            let chat = Recap.isTrivial(digest)   // kept, marked: the app lists it only while it runs
+            digest.title = titles[item.id] ?? head.firstPrompt
+            digest.repoName = cachedRepo(cwd)
+            let cg = cachedGit(cwd, withBranch: true)
+            digest.branch = cg.branch
+            if var p = Recap.project(digest: digest, git: cg.info, now: now, agent: .muse, quietFor: now.timeIntervalSince(item.mtime)), let last = digest.lastTimestamp {
+                p.terminal = true; p.startedAt = Self.created(item.url); p.smallTalk = chat
+                p.prs = PullRequestScan.requests(PullRequestScan.created(in: item.url))
+                out.append((p, digest, cg.info, last)); if !chat { real += 1 }
+            }
+        }
+        return out
+    }
+
+    /// The top of a Muse log never changes once it holds the folder and the first prompt.
+    private var museHeads: [String: MuseTranscript.Head] = [:]
+    private func cachedMuseHead(_ url: URL) -> MuseTranscript.Head? {
+        lock.lock(); let hit = museHeads[url.path]; lock.unlock()
+        if let hit { return hit }
+        guard let h = MuseTranscript.head(of: url) else { return nil }
+        if h.firstPrompt != nil { lock.lock(); museHeads[url.path] = h; lock.unlock() }
+        return h
+    }
+
+    // MARK: Cursor (~/.cursor/projects/<folder>/agent-transcripts/<id>/<id>.jsonl; titles and folders from its database)
+    /// Cursor's agent chats, in the editor and in its Agents window alike. Subagents' and archived ones are left out.
+    public func cursor(limit: Int, now: Date = Date()) -> [Found] {
+        let fm = FileManager.default
+        let projects = home.appendingPathComponent(".cursor/projects")
+        let cutoff = now.addingTimeInterval(-Double(maxAgeDays) * 86_400)
+        var candidates: [(url: URL, id: String, slug: String, mtime: Date)] = []
+        for dir in (try? fm.contentsOfDirectory(at: projects, includingPropertiesForKeys: nil)) ?? [] {
+            let chats = dir.appendingPathComponent("agent-transcripts")
+            for chat in (try? fm.contentsOfDirectory(at: chats, includingPropertiesForKeys: nil)) ?? [] {
+                let id = chat.lastPathComponent, file = chat.appendingPathComponent(id + ".jsonl")
+                if let m = Self.mtime(file), m > cutoff { candidates.append((file, id, dir.lastPathComponent, m)) }
+            }
+        }
+        let user = home.appendingPathComponent("Library/Application Support/Cursor/User")
+        let store = CursorStore(user: user)
+        var out: [Found] = []
+        candidates.sort { $0.mtime > $1.mtime }
+        for item in candidates {
+            guard out.count < limit else { break }
+            let header = store?.header(item.id)
+            if header?.archived == true || header?.subagent == true { continue }
+            guard var digest = cachedDigest(item.url, mtime: item.mtime, parse: CursorTranscript.digest), digest.lastUserText != nil else { continue }
+            // The title and folder change rarely: asked of the database again only when the transcript changed.
+            let key = "cursor:" + item.id
+            lock.lock(); var meta = cursorMeta[key]; lock.unlock()
+            if meta?.mtime != item.mtime || meta?.folder == nil && header?.workspaceId != nil {
+                let chat = store?.chat(item.id)
+                let workspace = header?.workspaceId ?? chat?.workspaceId
+                let folder = workspace.flatMap { store?.folder(workspace: $0) }
+                    ?? (item.slug == CursorApp.noFolder ? projects.appendingPathComponent(CursorApp.noFolder).path : CursorApp.folder(forSlug: item.slug))
+                meta = (item.mtime, chat?.name, folder)
+                lock.lock(); cursorMeta[key] = meta; lock.unlock()
+            }
+            guard let cwd = meta?.folder, usable(cwd) else { continue }
+            digest.sessionId = item.id; digest.cwd = cwd; digest.title = meta?.name
+            // A transcript has no times of its own: the file was last written when the chat last moved, or Cursor says it did later
+            // (a call waiting on you writes nothing). Never later than now.
+            let moved = min(max(item.mtime, header?.updated ?? .distantPast), now)
+            digest.lastTimestamp = moved
+            if digest.title == nil { digest.title = digest.lastAsk ?? digest.lastUserText }
+            digest.repoName = cachedRepo(cwd)
+            let cg = cachedGit(cwd, withBranch: true)
+            digest.branch = cg.branch
+            // Cursor says in its database when it waits on you, and for what: that is a request, not a guess from a quiet transcript.
+            var quiet = now.timeIntervalSince(moved), request: (tool: String, input: [String: Any])?
+            if header?.blocking == true, quiet < 4 * 3600, let call = store?.pending(item.id) {
+                request = CursorApp.ask(call)
+                digest.turnOpen = true; digest.pendingTool = PendingTool(block: ["name": request!.tool, "input": request!.input])
+                quiet = max(quiet, 3600)
+            }
+            if var p = Recap.project(digest: digest, git: cg.info, now: now, agent: .cursor, quietFor: quiet, inApp: true) {
+                p.startedAt = Self.created(item.url)
+                if let request {
+                    var ask = Ask(id: "cursor:" + item.id, agent: Agent.cursor.id, tool: request.tool, input: request.input)
+                    ask.transcriptAt = now
+                    p.ask = ask
+                }
+                out.append((p, digest, cg.info, moved))
+            }
+        }
+        // Agents that run in Cursor's cloud have no transcript here, only the list Cursor last fetched.
+        for c in (store?.cloudAgents() ?? []).filter({ $0.updated > cutoff }).prefix(limit) {
+            var d = SessionDigest()
+            d.sessionId = c.id; d.title = c.name; d.lastTimestamp = c.updated
+            out.append((Recap.cloudAgent(c, now: now), d, nil, c.updated))
+        }
+        // Both kinds compete for the limit by when they last moved.
+        return Array(out.sorted { $0.last > $1.last }.prefix(limit))
+    }
+    private var cursorMeta: [String: (mtime: Date, name: String?, folder: String?)] = [:]
+
+    private var firstPrompts: [String: String] = [:]
+    private func cachedFirstPrompt(_ url: URL) -> String? {
+        lock.lock(); let hit = firstPrompts[url.path]; lock.unlock()
+        if let hit { return hit }
+        guard let t = PiTranscript.firstPrompt(in: url) else { return nil }
+        lock.lock(); firstPrompts[url.path] = t; lock.unlock()
+        return t
+    }
+
+    /// The names Codex shows for its threads, newest last in the file.
+    private func codexThreadNames(_ url: URL) -> [String: String] {
+        guard let m = Self.mtime(url) else { return [:] }
+        lock.lock(); let hit = threadNames; lock.unlock()
+        if let hit, hit.mtime == m { return hit.names }
+        var names: [String: String] = [:]
+        if let text = try? String(contentsOf: url, encoding: .utf8) {
+            for line in text.split(separator: "\n") {
+                guard let o = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any],
+                      let id = o["id"] as? String, let name = o["thread_name"] as? String else { continue }
+                names[id] = name
+            }
+        }
+        lock.lock(); threadNames = (m, names); lock.unlock()
+        return names
+    }
+
+    /// The first line of a Codex or pi file holds the folder and id, far from the tail we read for messages.
+    /// `lines`: how many lines the head is (Oh My Pi puts a title line before its header).
+    static func head(of url: URL, lines: Int = 1, window: Int = 1_000_000, parse: ([String]) -> SessionDigest = CodexTranscript.digest) -> SessionDigest? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: window) else { return nil }
+        // Cut at newlines before decoding: a chunk that ends inside a character (Hebrew, emoji) is not valid UTF-8.
+        var out: [String] = [], start = data.startIndex
+        while out.count < lines, let end = data[start...].firstIndex(of: 0x0A), let line = String(data: data[start..<end], encoding: .utf8) {
+            out.append(line); start = data.index(after: end)
+        }
+        return out.isEmpty ? nil : parse(out)
+    }
+
+    /// Only the tail of the file: sessions can be tens of megabytes and the recent part is what matters.
+    /// Busy sessions can end in megabytes of tool output and images, so the window widens until real messages appear.
+    static func digest(of url: URL, windows: [UInt64] = [600_000, 4_000_000, 16_000_000], parse: ([String]) -> SessionDigest) -> SessionDigest? {
+        var result: SessionDigest?
+        for window in windows {
+            guard let d = digest(of: url, tailBytes: window, parse: parse) else { continue }
+            result = d
+            if d.lastTimestamp != nil, d.lastUserText != nil { break }
+        }
+        return result
+    }
+
+    private static func digest(of url: URL, tailBytes: UInt64, parse: ([String]) -> SessionDigest) -> SessionDigest? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        let size = (try? handle.seekToEnd()) ?? 0
+        let start = size > tailBytes ? size - tailBytes : 0
+        try? handle.seek(toOffset: start)
+        guard var data = try? handle.readToEnd() else { return nil }
+        // Drop the partial first line before decoding: a tail that starts inside a character (Hebrew, emoji) is not valid UTF-8.
+        if start > 0, let nl = data.firstIndex(of: 0x0A) { data = data[(nl + 1)...] }
+        guard let text = String(data: data, encoding: .utf8) else { return nil }
+        var d = parse(text.split(separator: "\n", omittingEmptySubsequences: true).map(String.init))
+        if d.title == nil, url.path.contains("/.claude/") { d.title = lastTitle(in: url) }
+        if d.title == nil, url.path.contains("/.pi/") { d.title = lastTitle(in: url, marker: #""type":"session_info""#, key: "name") }
+        if d.title == nil, url.path.contains("/.omp/") { d.title = lastTitle(in: url, marker: #""type":"title_change""#, key: "title") }
+        return d
+    }
+
+    /// Session titles (Claude's custom-title records, pi's session_info) are written occasionally, so they often sit
+    /// outside the tail. Search the last 8 MB for the newest one.
+    static func lastTitle(in url: URL, window: Int = 8_000_000, marker text: String = #""type":"custom-title""#, key: String = "customTitle") -> String? {
+        guard let data = try? Data(contentsOf: url, options: .alwaysMapped), let marker = text.data(using: .utf8) else { return nil }
+        let lower = max(0, data.count - window)
+        guard let hit = data.range(of: marker, options: .backwards, in: lower..<data.count) else { return nil }
+        let start = (data[..<hit.lowerBound].lastIndex(of: 0x0A)).map { $0 + 1 } ?? 0
+        let end = data[hit.upperBound...].firstIndex(of: 0x0A) ?? data.count
+        guard let obj = (try? JSONSerialization.jsonObject(with: data[start..<end])) as? [String: Any] else { return nil }
+        return (obj[key] as? String).flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+    /// A linked git worktree keeps its git folder inside the main checkout's (`git-common-dir`), whose folder names the project.
+    public static func repo(at cwd: String) -> String? {
+        guard let out = run("git", ["-C", cwd, "rev-parse", "--path-format=absolute", "--git-common-dir", "--git-dir"]) else { return nil }
+        let lines = out.split(separator: "\n").map(String.init)
+        guard lines.count == 2, lines[0] != lines[1], (lines[0] as NSString).lastPathComponent == ".git" else { return nil }
+        return ((lines[0] as NSString).deletingLastPathComponent as NSString).lastPathComponent
+    }
+
+    public static func branch(at cwd: String) -> String? {
+        let b = run("git", ["-C", cwd, "rev-parse", "--abbrev-ref", "HEAD"])?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (b?.isEmpty == false && b != "HEAD") ? b : nil
+    }
+
+    public static func git(at cwd: String) -> GitInfo? {
+        guard let status = run("git", ["-C", cwd, "status", "--porcelain", "-b"]) else { return nil }
+        let last = run("git", ["-C", cwd, "log", "-1", "--format=%s"])?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return GitInfo.parse(status: status, lastCommit: last)
+    }
+
+    /// What a tool printed, or nil when it failed. The output is read while it runs: a pipe holds 64 KB, and `git status`
+    /// in a checkout with a couple of thousand changes prints more, then waits for room, and the scan waited with it for
+    /// good (the list stayed on "Looking for your sessions"). One slower than `timeout` (a huge checkout, a network
+    /// volume) is stopped, so one folder cannot hold up the list.
+    private static func run(_ tool: String, _ args: [String], timeout: TimeInterval = 5) -> String? {
+        let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/env"); p.arguments = [tool] + args
+        let pipe = Pipe(); p.standardOutput = pipe; p.standardError = FileHandle.nullDevice; p.standardInput = FileHandle.nullDevice
+        do { try p.run() } catch { return nil }
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeout) { if p.isRunning { p.terminate() } }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        guard p.terminationReason == .exit, p.terminationStatus == 0 else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+}
